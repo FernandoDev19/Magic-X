@@ -100,13 +100,13 @@ export function castAbilitySingle(
                 );
                 if (
                     effect.permanent ||
-                    !newPlayerEffects.find((e) => e.type === effect!.type)
+                    !existingEffect
                 ) {
                     newPlayerEffects.push({ ...effect });
                     messages.push(
                         `Tú: ${effect.type} (${effect.permanent ? "∞" : effect.duration + " turnos"}).`,
                     );
-                } else {
+                } else if (existingEffect) {
                     existingEffect.duration = effect.duration;
                     messages.push(`🔄 Refrescado: ${effect.type}.`);
                 }

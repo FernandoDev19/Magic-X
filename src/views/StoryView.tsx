@@ -30,7 +30,7 @@ export default function StoryView({ state, setState, setView, handleBackToHub }:
         return <div>Error: Nodo de historia no encontrado.</div>;
     }
 
-    function processEffectsAndAdvance(option?: StoryOption, nextId?: string, returnToHub?: boolean, triggerEnemyId?: string) {
+    function processEffectsAndAdvance(option?: StoryOption, nextId?: string, returnToHub?: boolean, triggerEnemyId?: string, nextChapterId?: string) {
         let ns = { ...state };
 
         const effect = option?.effect;
@@ -99,6 +99,19 @@ export default function StoryView({ state, setState, setView, handleBackToHub }:
             ns.narrative.narrativeLog = [...ns.narrative.narrativeLog, `[${chapter!.title}] ${option.text}`];
         }
 
+        if (nextChapterId) {
+            // Find the new chapter and reset nodeId to its startNodeId
+            const newChapter = CHAPTERS.find((c) => c.id === nextChapterId);
+            const newNodeId = newChapter?.startNodeId ?? "wake_up";
+            ns.narrative = {
+                ...ns.narrative,
+                chapterId: nextChapterId,
+                nodeId: newNodeId,
+            };
+            // Reset map for the new chapter
+            ns.mapState = undefined;
+        }
+
         if (triggerEnemyId) {
             const enemy = getEnemy(triggerEnemyId);
             ns.narrative = { ...ns.narrative, nodeId: nextId ?? ns.narrative.nodeId };
@@ -108,7 +121,7 @@ export default function StoryView({ state, setState, setView, handleBackToHub }:
             return;
         }
 
-        if (nextId) {
+        if (nextId && !nextChapterId) {
             ns.narrative = { ...ns.narrative, nodeId: nextId };
         }
 
@@ -147,15 +160,15 @@ export default function StoryView({ state, setState, setView, handleBackToHub }:
                 confirmButtonText: "Continuar",
                 customClass: { popup: "swal-custom-border" }
             }).then(() => {
-                processEffectsAndAdvance(option, option.nextNodeId, option.returnToHub, option.triggerEnemyId);
+                processEffectsAndAdvance(option, option.nextNodeId, option.returnToHub, option.triggerEnemyId, option.nextChapterId);
             });
         } else {
-            processEffectsAndAdvance(option, option.nextNodeId, option.returnToHub, option.triggerEnemyId);
+            processEffectsAndAdvance(option, option.nextNodeId, option.returnToHub, option.triggerEnemyId, option.nextChapterId);
         }
     }
 
     function handleContinue() {
-        processEffectsAndAdvance(undefined, node.nextNodeId, node.returnToHub, node.triggerEnemyId);
+        processEffectsAndAdvance(undefined, node.nextNodeId, node.returnToHub, node.triggerEnemyId, node.nextChapterId);
     }
 
     return (

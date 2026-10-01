@@ -1,7 +1,7 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { CHAPTERS } from "./data/events";
-import { ALL_SPELLS, getSpellById } from "./data/spells";
-import { buildInventory, ALL_ITEMS } from "./data/items";
+import { getSpellById } from "./data/spells";
+import { buildInventory } from "./data/items";
 import { getEquipment } from "./data/equipment";
 import { PLAYER_PROFILE } from "./data/player";
 import { StatsPanel } from "./components/StatsPanel";
@@ -11,10 +11,16 @@ import StoryView from "./views/StoryView";
 import InventoryView from "./views/InventoryView";
 import EquipmentView from "./views/EquipmentView";
 import ShopView from "./views/ShopView";
-import ExploreView, { type ExploreEvent } from "./views/ExploreView";
+import ExploreView from "./views/ExploreView";
 import HubView from "./views/HubView";
-import { getEnding } from "./utils/get-ending";
+import { getEndingDetails } from "./utils/get-ending";
 import GrimoireView from "./views/GrimoireView";
+import PartyView from "./views/PartyView";
+import QuestView from "./views/QuestView";
+import { ALL_QUESTS } from "./data/quests";
+import { INITIAL_COMPANIONS } from "./data/companions";
+import { getEnemy } from "./data/enemies";
+import { initCombat } from "./utils/combat";
 import type { GameState } from "./types/game-state";
 import type { EquippedGear } from "./types/equipment.type";
 import { getSkillById } from "./data/skills";
@@ -54,6 +60,7 @@ function buildInitialState(): GameState {
                 .map((id) => getSkillById(id)!)
                 .filter(Boolean),
             xp: 0,
+            party: INITIAL_COMPANIONS,
         },
         combat: {
             active: false,
@@ -69,20 +76,31 @@ function buildInitialState(): GameState {
             nodeId: CHAPTERS[0].startNodeId,
             narrativeLog: [],
         },
+        quests: ALL_QUESTS,
     };
 }
+
 
 export default function App() {
     // States
     const [state, setState] = useState<GameState>(() => {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
-            return raw ? JSON.parse(raw) : buildInitialState();
+            if (!raw) return buildInitialState();
+            const parsed = JSON.parse(raw);
+            return {
+                ...parsed,
+                quests: parsed.quests ?? ALL_QUESTS,
+                player: {
+                    ...parsed.player,
+                    party: parsed.player?.party ?? INITIAL_COMPANIONS,
+                }
+            };
         } catch {
             return buildInitialState();
         }
     });
-    const [exploreEvent, setExploreEvent] = useState<ExploreEvent | null>(null);
+
     const [view, setView] = useState<View>("hub");
     const [gameOver, setGameOver] = useState(false);
     const [combatResult, setCombatResult] = useState<
@@ -97,7 +115,6 @@ export default function App() {
 
     function handleBackToHub() {
         setView("hub");
-        setExploreEvent(null);
         setShopMessage(null);
         setCombatResult(null);
     }
@@ -114,7 +131,6 @@ export default function App() {
         setGameOver(false);
         setCombatResult(null);
         setView("hub");
-        setExploreEvent(null);
         setShopMessage(null);
     }
 
@@ -169,49 +185,66 @@ export default function App() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                     {combatResult === "victory" && (
                         <div style={resultBox("#1D9E7522", "#1D9E75")}>
-                            Victoria. El enemigo ha caído.
-                            <button
-                                style={smallBtn}
-                                onClick={handleContinueAfterCombat}
-                            >
-                                Volver al Hub
-                            </button>
+                            <span>Victoria. El enemigo ha caído.</span>
+                            <div style={{ display: "flex", gap: 8 }}>
+                                <button
+                                    style={smallBtn}
+                                    onClick={() => {
+                                        setCombatResult(null);
+                                        setView("story");
+                                        setState({ ...state, combat: { ...state.combat, active: false } });
+                                    }}
+                                >
+                                    Continuar Historia
+                                </button>
+                                <button
+                                    style={smallBtn}
+                                    onClick={handleContinueAfterCombat}
+                                >
+                                    Volver al Hub
+                                </button>
+                            </div>
                         </div>
                     )}
 
-                    {gameOver ? (
-                        <div style={endCard}>
-                            <h2 style={{ color: "#c9a84c", marginBottom: 12 }}>
-                                Fin del camino
-                            </h2>
-                            <p style={{ color: "#ccc" }}>
-                                {state.player.stats.hp <= 0
-                                    ? "CaÃ­ste en combate. El dios muere... por ahora."
-                                    : getEnding(
-                                          state.player.stats,
-                                          state.player.xp,
-                                      )}
-                            </p>
-                            <p
-                                style={{
-                                    color: "#666",
-                                    fontSize: 11,
-                                    marginTop: 8,
-                                }}
-                            >
-                                XP total: {state.player.xp}
-                            </p>
-                            <button style={restartBtn} onClick={handleRestart}>
-                                Renacer
-                            </button>
-                        </div>
-                    ) : (
+                    {gameOver ? (() => {
+                        const ending = getEndingDetails(
+                            state.player.stats,
+                            state.player.xp,
+                            state.player.mana,
+                            state.player.party ?? []
+                        );
+                        return (
+                            <div style={endCard}>
+                                <div style={{ fontSize: 40, textAlign: "center", marginBottom: 8 }}>
+                                    {state.player.stats.hp <= 0 ? "💀" : ending.icon}
+                                </div>
+                                <h2 style={{ color: ending.color, marginBottom: 4, textAlign: "center" }}>
+                                    {state.player.stats.hp <= 0 ? "Caíste en Combate" : ending.title}
+                                </h2>
+                                <h4 style={{ color: "#aaa", textAlign: "center", fontWeight: "normal", marginTop: 0, marginBottom: 16 }}>
+                                    {state.player.stats.hp <= 0 ? "Tu viaje ha concluido por ahora..." : ending.subtitle}
+                                </h4>
+                                <p style={{ color: "#ccc", fontSize: 13, lineHeight: 1.6, background: "rgba(0,0,0,0.3)", padding: 12, borderRadius: 6 }}>
+                                    {state.player.stats.hp <= 0
+                                        ? "Tu fuerza y maná se agotaron en el fragor de la batalla. Las sombras del santuario te envuelven."
+                                        : ending.description}
+                                </p>
+                                <div style={{ display: "flex", justifyContent: "space-between", color: "#888", fontSize: 11, marginTop: 12 }}>
+                                    <span>XP acumulada: {state.player.xp}</span>
+                                    <span>Compañeros reclutados: {(state.player.party ?? []).filter((c) => c.isRecruited).length}</span>
+                                </div>
+                                <button style={{ ...restartBtn, borderColor: ending.color, color: ending.color, width: "100%", marginTop: 16 }} onClick={handleRestart}>
+                                    🔄 Renacer / Nueva Aventura
+                                </button>
+                            </div>
+                        );
+                    })() : (
                         <>
                             {/* HUB */}
                             {view === "hub" && (
                                 <HubView
                                     setState={setState}
-                                    setExploreEvent={setExploreEvent}
                                     setView={setView}
                                     setShopMessage={setShopMessage}
                                     chapterTitle={
@@ -224,13 +257,27 @@ export default function App() {
                                 />
                             )}
 
-                            {/* EXPLORE */}
-                            {view === "explore" && exploreEvent && (
+                            {/* EXPLORE / MAP */}
+                            {view === "explore" && (
                                 <ExploreView
-                                    exploreEvent={exploreEvent}
-                                    onBackToHub={handleBackToHub}
                                     state={state}
                                     setState={setState}
+                                    onBackToHub={handleBackToHub}
+                                    onStartCombat={(enemyId) => {
+                                        const enemy = getEnemy(enemyId);
+                                        setState({ ...state, combat: initCombat([enemy]) });
+                                        setView("combat");
+                                    }}
+                                    onGoToShop={() => setView("shop")}
+                                />
+                            )}
+
+                            {/* PARTY */}
+                            {view === "party" && (
+                                <PartyView
+                                    state={state}
+                                    setState={setState}
+                                    onBackToHub={handleBackToHub}
                                 />
                             )}
 
@@ -331,6 +378,14 @@ export default function App() {
                                         }
                                     />
                                 </div>
+                            )}
+
+                            {/* QUESTS */}
+                            {view === "quests" && (
+                                <QuestView
+                                    state={state}
+                                    onBack={handleBackToHub}
+                                />
                             )}
                         </>
                     )}

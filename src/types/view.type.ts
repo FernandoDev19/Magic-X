@@ -6,4 +6,7 @@ export type View =
     | "inventory"
     | "equipment"
     | "story"
-    | "grimoire";
+    | "grimoire"
+    | "party"
+    | "quests";
+

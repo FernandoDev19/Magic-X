@@ -120,6 +120,15 @@ export const ALL_EQUIPMENT: Record<string, EquipmentItem> = {
     },
 
     // ── Armaduras ─────────────────────────────────
+    tunica_vieja: {
+        id: "tunica_vieja",
+        name: "Tunica vieja",
+        icon: "🥼",
+        description: "Ropas viejas obtenidas de la carcel.",
+        category: "armor",
+        validSlots: ["armor"],
+        bonuses: { resistance: 2 },
+    },
     leather_armor: {
         id: "leather_armor",
         name: "Armadura de cuero",

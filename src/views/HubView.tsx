@@ -3,11 +3,10 @@ import type { GameState } from "../types/game-state";
 import type { View } from "../types/view.type";
 import { initCombat } from "../utils/combat";
 import { COMBAT_ENEMIES } from "./CombatView";
-import { EXPLORE_EVENTS, type ExploreEvent } from "./ExploreView";
 
 type props = {
     setState: React.Dispatch<React.SetStateAction<GameState>>;
-    setExploreEvent: (event: ExploreEvent) => void;
+    setExploreEvent?: (event: any) => void;
     setView: (view: View) => void;
     setShopMessage: (message: string | null) => void;
     chapterTitle: string;
@@ -15,7 +14,6 @@ type props = {
 
 export default function HubView({
     setState,
-    setExploreEvent,
     setView,
     setShopMessage,
 
@@ -34,9 +32,6 @@ export default function HubView({
     }
 
     function handleExplore() {
-        const randomEvent =
-            EXPLORE_EVENTS[Math.floor(Math.random() * EXPLORE_EVENTS.length)];
-        setExploreEvent(randomEvent);
         setView("explore");
     }
 
@@ -83,10 +78,10 @@ export default function HubView({
                 <button onClick={handleExplore} style={hubMainButton}>
                     <div style={{ fontSize: 28, marginBottom: 4 }}>🗺️</div>
                     <div style={{ fontSize: 13, fontWeight: "bold" }}>
-                        Explorar
+                        Mapa de Viaje
                     </div>
                     <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
-                        Evento aleatorio
+                        Nodos interactivos
                     </div>
                 </button>
 
@@ -96,7 +91,17 @@ export default function HubView({
                         Combatir
                     </div>
                     <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
-                        Enemigo aleatorio
+                        Enemigos del capítulo
+                    </div>
+                </button>
+
+                <button onClick={() => setView("party")} style={hubMainButton}>
+                    <div style={{ fontSize: 28, marginBottom: 4 }}>👥</div>
+                    <div style={{ fontSize: 13, fontWeight: "bold" }}>
+                        Compañeros
+                    </div>
+                    <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+                        Gestión de equipo
                     </div>
                 </button>
 
@@ -121,12 +126,22 @@ export default function HubView({
                 </button>
 
                 <button onClick={handleEquipment} style={hubMainButton}>
-                    <div style={{ fontSize: 28, marginBottom: 4 }}>⚔️</div>
+                    <div style={{ fontSize: 28, marginBottom: 4 }}>🛡️</div>
                     <div style={{ fontSize: 13, fontWeight: "bold" }}>
                         Equipamiento
                     </div>
                     <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
                         Armas, armadura y accesorios
+                    </div>
+                </button>
+
+                <button onClick={() => setView("quests")} style={hubMainButton}>
+                    <div style={{ fontSize: 28, marginBottom: 4 }}>📋</div>
+                    <div style={{ fontSize: 13, fontWeight: "bold" }}>
+                        Misiones
+                    </div>
+                    <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+                        Diario de misiones
                     </div>
                 </button>
 
@@ -140,6 +155,7 @@ export default function HubView({
                     </div>
                 </button>
             </div>
+
 
             {/* historia */}
             <div

@@ -7,6 +7,10 @@ import type { Skill } from "./skills.type";
 import type { Spell } from "./spell.type";
 import type { StatusEffect } from "./status-effect.type";
 
+import type { Companion } from "./companion.type";
+import type { ChapterMap } from "./map.type";
+import type { Quest } from "./quest.type";
+
 export interface NarrativeEffect {
     corruption?: number;
     hpChange?: number;
@@ -32,6 +36,7 @@ export interface StoryOption {
     nextNodeId?: string;
     triggerEnemyId?: string;
     returnToHub?: boolean;
+    nextChapterId?: string;
 }
 
 export interface StoryNode {
@@ -42,6 +47,7 @@ export interface StoryNode {
     nextNodeId?: string;
     triggerEnemyId?: string;
     returnToHub?: boolean;
+    nextChapterId?: string;
 }
 
 export interface Chapter {
@@ -78,6 +84,7 @@ export type GameState = {
         statusEffects: StatusEffect[];
         skills: Skill[];
         xp: number;
+        party: Companion[];
     };
 
     combat: CombatState;
@@ -87,4 +94,9 @@ export type GameState = {
         nodeId: string;
         narrativeLog: string[];
     };
+
+    mapState?: ChapterMap;
+    quests: Quest[];
 };
+
+
