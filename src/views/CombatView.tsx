@@ -1,619 +1,818 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CombatState } from "../types/combat-state.type";
 import type { GameState } from "../types/game-state";
 import type { Enemy } from "../types/enemy.type";
 import type { Item } from "../types/item.type";
+import type { StatusEffect } from "../types/status-effect.type";
 import type { ElementLevels } from "../types/magic-element.type";
 import type { Mana, Stats } from "../types/player.type";
 import type { Spell } from "../types/spell.type";
 import type { View } from "../types/view.type";
 import type { Skill } from "../types/skills.type";
-import type { Companion } from "../types/companion.type";
-import { CompanionPanel } from "../components/CompanionPanel";
+import { CombatLog, getLineStyle } from "../components/CombatLog";
+import { TurnOrderBar } from "../components/TurnOrderBar";
+import { EnemyArt } from "../components/EnemyArt";
+import { Portrait } from "../components/Portrait";
+import { BACKGROUNDS, USE_IMAGES } from "../data/visuals";
 import {
-    applyEnemyStatusEffects,
-    applyPlayerStatusEffects,
-    allEnemiesAttack,
-    allEnemiesDead,
-    isPlayerDead,
-    castAbilityArea,
-    castAbilitySingle,
+  allEnemiesDead,
+  canCast,
+  castAbilityArea,
+  castAbilitySingle,
+  getEffectiveCost,
 } from "../utils/combat";
-import { getEffectiveStats, getEnemyEffectiveStats } from "../utils/equipment";
+import { beginCombat, endPlayerTurn, getTargetIdx, type Outcome } from "../utils/turns";
+import { getEffectiveStats } from "../utils/equipment";
 import { resolveLoot, mergeLootIntoInventory } from "../utils/loot";
-import { CombatLog } from "../components/CombatLog";
 import { getSanityEffects } from "../utils/mental-effects";
-
+import { gainXp } from "../utils/leveling";
+import { announceLevelUps } from "../utils/level-up-ui";
 
 interface Props {
-    state: GameState;
-    setState: React.Dispatch<React.SetStateAction<GameState>>;
-    setGameOver: (gameOver: boolean) => void;
-    setCombatResult: (result: "victory" | "defeat" | null) => void;
-    setView: (view: View) => void;
-    combat: CombatState;
-    spells: Spell[];
-    skills: Skill[];
-    items: Item[];
-    stats: Stats;
-    mana: Mana;
+  state: GameState;
+  setState: React.Dispatch<React.SetStateAction<GameState>>;
+  setGameOver: (gameOver: boolean) => void;
+  setCombatResult: (result: "victory" | "defeat" | null) => void;
+  setView: (view: View) => void;
+  combat: CombatState;
+  spells: Spell[];
+  skills: Skill[];
+  items: Item[];
+  stats: Stats;
+  mana: Mana;
 }
 
 const ELEMENT_ICON: Record<string, string> = {
-    fire: "🔥", earth: "🪨", water: "💧", air: "🌪",
-    light: "✨", darkness: "🌑", electric: "⚡", vital: "💛",
+  fire: "🔥", earth: "🪨", water: "💧", air: "🌪",
+  light: "✨", darkness: "🌑", electric: "⚡", vital: "💛",
 };
 
 const MANA_COLOR: Record<string, string> = {
-    mana: "#378ADD",
-    celestial: "#FAC775",
-    infernal: "#E24B4A",
+  mana: "#378ADD",
+  celestial: "#FAC775",
+  infernal: "#E24B4A",
 };
 
-export const COMBAT_ENEMIES = [
-    "bandit", "wolf", "fire_sprite", "water_spirit",
-    "shadow_assassin", "air_elemental",
-];
+const EFFECT_ICON: Record<string, string> = {
+  strengthened: "💪", velocitized: "💨", guarding: "🛡️", invisible: "👻",
+  poisoned: "☠️", burning: "🔥", ignition: "🔥", cursed: "🩸",
+  weakened: "⬇️", slowed: "🐌", frozen: "🧊", paralyzed: "⚡",
+  blinded: "🙈", mana_drain: "💧",
+};
+const BUFFS = ["strengthened", "velocitized", "invisible", "guarding"];
+
+/** Pon en false si prefieres que la debilidad del enemigo no se muestre */
+const SHOW_WEAKNESS = true;
+
+export const ENCOUNTERS_BY_CHAPTER: Record<string, string[]> = {
+  ch1: ["bandit", "wolf"],
+  ch2: ["shadow_assassin", "dark_acolyte", "fire_sprite", "water_spirit"],
+  ch3: ["corrupted_knight", "storm_elemental", "air_elemental", "earth_golem"],
+};
 
 function addLog(state: GameState, ...lines: string[]): GameState {
-    return {
-        ...state,
-        combat: {
-            ...state.combat,
-            log: [...state.combat.log, ...lines],
-        },
-    };
+  return { ...state, combat: { ...state.combat, log: [...state.combat.log, ...lines] } };
 }
 
+// ─── Números flotantes ─────────────────────────────────────────────────────
+interface Popup { id: number; target: string; text: string; color: string }
+let popupId = 0;
+
+function snapshotHp(s: GameState): Record<string, number> {
+  const m: Record<string, number> = { player: s.player.stats.hp };
+  s.combat.enemies.forEach((e, i) => (m[`e${i}`] = e.hp));
+  (s.player.party ?? []).forEach((c) => (m[c.id] = c.stats.hp));
+  return m;
+}
+
+function diffPopups(before: GameState, after: GameState): Popup[] {
+  const a = snapshotHp(before);
+  const b = snapshotHp(after);
+  const out: Popup[] = [];
+  for (const k of Object.keys(b)) {
+    if (a[k] === undefined || a[k] === b[k]) continue;
+    const d = b[k] - a[k];
+    out.push({ id: ++popupId, target: k, text: d > 0 ? `+${d}` : `${d}`, color: d > 0 ? "#5DCAA5" : "#ff6b6b" });
+  }
+  return out;
+}
+
+function Floaters({ popups }: { popups: Popup[] }) {
+  return (
+    <>
+      {popups.map((p) => (
+        <span key={p.id} style={{ ...floater, color: p.color }}>{p.text}</span>
+      ))}
+    </>
+  );
+}
+
+function Chips({ effects }: { effects: StatusEffect[] }) {
+  if (effects.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+      {effects.map((e, i) => (
+        <span
+          key={i}
+          title={`${e.type} (${e.permanent ? "∞" : `${e.duration}t`})`}
+          style={{
+            fontSize: 10, padding: "0 4px", borderRadius: 3, background: "#0d0d1a",
+            border: `1px solid ${BUFFS.includes(e.type) ? "#5DCAA544" : "#E24B4A44"}`,
+          }}
+        >
+          {EFFECT_ICON[e.type] ?? "✨"}
+          {!e.permanent && <span style={{ fontSize: 8, color: "#888" }}>{e.duration}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function HpBar({ pct, color, h = 5, marks }: { pct: number; color: string; h?: number; marks?: { at: number; done: boolean }[] }) {
+  return (
+    <div style={{ height: h, background: "#0a0a14", borderRadius: h, position: "relative", border: "1px solid #ffffff10" }}>
+      <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: "100%", background: color, borderRadius: h, transition: "width 0.4s" }} />
+      {marks?.map((m, i) => (
+        <div key={i} style={{ position: "absolute", top: -2, bottom: -2, width: 1, left: `${m.at}%`, background: m.done ? "#333" : "#ff9a3c" }} />
+      ))}
+    </div>
+  );
+}
+
+function BattleBackdrop({ chapterId }: { chapterId: string }) {
+  const [failed, setFailed] = useState(false);
+  const bg = BACKGROUNDS[chapterId] ?? BACKGROUNDS.default;
+  return (
+    <>
+      <div style={{ position: "absolute", inset: 0, background: bg.gradient }} />
+      {USE_IMAGES && bg.src && !failed && (
+        <img src={bg.src} alt="" onError={() => setFailed(true)}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.85 }} />
+      )}
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.1) 45%, rgba(0,0,0,0.55))" }} />
+    </>
+  );
+}
+
+// ─── Tarjetas del campo de batalla ─────────────────────────────────────────
+function EnemyTile({ enemy, selected, shaking, popups, onSelect }: {
+  enemy: Enemy; selected: boolean; shaking: boolean; popups: Popup[]; onSelect: () => void;
+}) {
+  const dead = enemy.hp <= 0;
+  const boss = !!enemy.phases;
+  const pct = Math.round((enemy.hp / enemy.maxHp) * 100);
+  return (
+    <div
+      onClick={dead ? undefined : onSelect}
+      style={{
+        gridColumn: boss ? "1 / -1" : undefined,
+        position: "relative", display: "flex", gap: 8, alignItems: "center",
+        padding: "6px 8px", borderRadius: 8, cursor: dead ? "default" : "pointer",
+        background: "rgba(8,8,20,0.74)",
+        border: selected ? "1px solid #c9a84c" : boss ? "1px solid #ff6b0066" : "1px solid #ffffff14",
+        boxShadow: selected ? "0 0 12px #c9a84c55" : "none",
+        opacity: dead ? 0.3 : 1,
+        filter: dead ? "grayscale(1)" : "none",
+        animation: shaking ? "shake 0.35s" : undefined,
+        transition: "border-color 0.15s, box-shadow 0.15s",
+      }}
+    >
+      {selected && <span style={arrow}>▶</span>}
+      <Floaters popups={popups} />
+      <EnemyArt id={enemy.id} fallback={ELEMENT_ICON[enemy.element]} size={boss ? 64 : 44} dead={dead} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 6, alignItems: "baseline" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: dead ? "#555" : "#f08a8a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {enemy.name}
+          </span>
+          <span style={{ fontSize: 9, color: "#888", flexShrink: 0 }}>
+            Nv{enemy.level}
+            {boss && !dead && <span style={{ color: "#ff9a3c" }}> · F{(enemy.phase ?? 0) + 1}</span>}
+          </span>
+        </div>
+        <HpBar
+          pct={pct}
+          color={pct > 50 ? "#E24B4A" : pct > 25 ? "#FAC775" : "#777"}
+          marks={enemy.phases?.map((p, i) => ({ at: p.hpBelowPct, done: i < (enemy.phase ?? 0) }))}
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3, gap: 4 }}>
+          <Chips effects={enemy.statusEffects} />
+          <span style={{ fontSize: 9, color: "#aaa", marginLeft: "auto" }}>{dead ? "✝" : `${enemy.hp}/${enemy.maxHp}`}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface MiniBar { label: string; value: number; max: number; color: string }
+
+function PartyRow({ name, portrait, hp, maxHp, bars, dead, active, hit, popups, effects }: {
+  name: string; portrait: string; hp: number; maxHp: number; bars: MiniBar[];
+  dead?: boolean; active?: boolean; hit?: boolean; popups: Popup[]; effects?: StatusEffect[];
+}) {
+  const pct = (hp / maxHp) * 100;
+  return (
+    <div
+      style={{
+        position: "relative", display: "flex", gap: 8, alignItems: "center",
+        padding: "6px 8px", borderRadius: 8, background: "rgba(8,8,20,0.78)",
+        border: active ? "1px solid #5DCAA5" : "1px solid #ffffff14",
+        boxShadow: active ? "0 0 12px #5DCAA555" : "none",
+        opacity: dead ? 0.45 : 1, filter: dead ? "grayscale(1)" : "none",
+        animation: hit ? "shake 0.35s" : undefined,
+        transition: "border-color 0.15s, box-shadow 0.15s",
+      }}
+    >
+      <Floaters popups={popups} />
+      <Portrait name={name} size={40} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: active ? "#5DCAA5" : "#ddd" }}>
+            {dead ? "💀 " : ""}{name}
+          </span>
+          <span style={{ fontSize: 10, color: "#ccc" }}>{hp}/{maxHp}</span>
+        </div>
+        <HpBar pct={pct} color={pct > 50 ? "#1D9E75" : pct > 25 ? "#FAC775" : "#E24B4A"} h={6} />
+        <div style={{ display: "flex", gap: 6, marginTop: 3 }}>
+          {bars.map((b) => (
+            <div key={b.label} style={{ flex: 1 }} title={`${b.label} ${b.value}/${b.max}`}>
+              <HpBar pct={b.max > 0 ? (b.value / b.max) * 100 : 0} color={b.color} h={3} />
+            </div>
+          ))}
+        </div>
+        {effects && effects.length > 0 && <div style={{ marginTop: 3 }}><Chips effects={effects} /></div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Ventana de comandos ───────────────────────────────────────────────────
+type Tab = "skills" | "spells" | "items";
+
+interface Info {
+  title: string;
+  description: string;
+  cost?: string;
+  costColor?: string;
+  damage?: number;
+  heal?: number;
+  target?: string;
+  effects?: string[];
+}
+
+interface Row {
+  key: string;
+  icon: string;
+  name: string;
+  tag?: string;
+  right: string;
+  rightColor: string;
+  disabled: boolean;
+  onClick: () => void;
+  info: Info;
+}
+
+function MenuBtn({ icon, label, badge, active, disabled, danger, onClick, onHover }: {
+  icon: string; label: string; badge?: string; active?: boolean; disabled?: boolean; danger?: boolean;
+  onClick: () => void; onHover: (on: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
+        padding: "4px 8px", fontSize: 11, fontFamily: "Georgia, serif",
+        background: active ? "#c9a84c1f" : "transparent",
+        borderLeft: `3px solid ${active ? "#c9a84c" : "transparent"}`,
+        borderTop: "none", borderRight: "none", borderBottom: "none",
+        color: danger ? "#E24B4A" : active ? "#c9a84c" : "#ccc",
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+    >
+      <span style={{ width: 16, textAlign: "center" }}>{icon}</span>
+      <span style={{ flex: 1 }}>{label}</span>
+      {badge && <span style={{ fontSize: 9, color: "#777" }}>{badge}</span>}
+    </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 export function CombatView({
-    combat, spells, items, mana, state, skills,
-    setState, setCombatResult, setView, setGameOver,
+  combat, spells, items, mana, state, skills,
+  setState, setCombatResult, setView, setGameOver,
 }: Props) {
-    const [animatingEnemyIdx, setAnimatingEnemyIdx] = useState<number | null>(null);
-    const [animatingPlayer, setAnimatingPlayer] = useState(false);
+  const [shakeEnemy, setShakeEnemy] = useState<number | null>(null);
+  const [hitPlayer, setHitPlayer] = useState(false);
+  const [popups, setPopups] = useState<Popup[]>([]);
+  const [tab, setTab] = useState<Tab>("spells");
+  const [info, setInfo] = useState<Info | null>(null);
+  const [showLog, setShowLog] = useState(false);
+  const startedRef = useRef(false);
 
-    const living = combat.enemies.filter((e) => e.hp > 0);
-    const selectedIdx = Math.min(combat.selectedEnemyIndex, living.length > 0 ? living.length - 1 : 0);
-    const targetEnemy = living[selectedIdx] ?? null;
+  const isPlayerTurn = combat.turn === "player";
+  const targetIdx = getTargetIdx(combat);
+  const targetEnemy = targetIdx >= 0 ? combat.enemies[targetIdx] : null;
+  const sanityEff = getSanityEffects(state.player.stats.sanity);
+  const canFlee = !state.returnTo || state.returnTo === "hub";
+  const bossFight = combat.enemies.some((e) => !!e.phases && e.hp > 0);
+  const partyActive = (state.player.party ?? []).filter((c) => c.isRecruited && c.isActive).slice(0, 2);
+  const actor = combat.order[combat.turnIdx];
 
-    const sanityEff = getSanityEffects(state.player.stats.sanity);
+  function flashEnemy(idx: number) {
+    setShakeEnemy(idx);
+    setTimeout(() => setShakeEnemy(null), 400);
+  }
 
-    function flashEnemy(idx: number) {
-        setAnimatingEnemyIdx(idx);
-        setTimeout(() => setAnimatingEnemyIdx(null), 400);
+  // ── Resolución de turnos ───────────────────────────────────────────────
+  function settle(ns: GameState, outcome: Outcome, before: GameState) {
+    const pops = diffPopups(before, ns);
+    if (pops.length) {
+      setPopups((p) => [...p, ...pops]);
+      setTimeout(() => setPopups((p) => p.filter((x) => !pops.includes(x))), 1100);
     }
-    function flashPlayer() {
-        setAnimatingPlayer(true);
-        setTimeout(() => setAnimatingPlayer(false), 400);
+    if (ns.player.stats.hp < before.player.stats.hp) {
+      setHitPlayer(true);
+      setTimeout(() => setHitPlayer(false), 400);
+    }
+    if (outcome === "victory") return handleVictory(ns);
+    setState(ns);
+    if (outcome === "defeat") {
+      setCombatResult("defeat");
+      setGameOver(true);
+    }
+  }
+
+  /** El jugador terminó su acción: actúan los demás hasta que vuelva a tocarte */
+  function resolve(ns: GameState) {
+    const { state: out, outcome } = endPlayerTurn(ns);
+    settle(out, outcome, state);
+  }
+
+  useEffect(() => {
+    if (startedRef.current || combat.order.length > 0 || combat.enemies.length === 0) return;
+    startedRef.current = true;
+    const { state: ns, outcome } = beginCombat(state);
+    settle(ns, outcome, state);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Acciones ───────────────────────────────────────────────────────────
+  function physicalPreview() {
+    if (!targetEnemy) return 0;
+    const eff = getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects);
+    return Math.max(1, eff.physical_strength - Math.floor(targetEnemy.resistance / 2));
+  }
+
+  function handlePhysicalAttack() {
+    if (!targetEnemy || !isPlayerTurn) return;
+    if (Math.random() < sanityEff.missChance) {
+      return resolve(addLog(state, "Tu mente falla... el ataque se pierde en el aire."));
+    }
+    const dmg = physicalPreview();
+    const weaponName = state.player.equipment.mainHand?.name ?? "Ataque físico";
+    flashEnemy(targetIdx);
+
+    const newEnemies = state.combat.enemies.map((e, i) =>
+      i === targetIdx ? { ...e, hp: Math.max(0, e.hp - dmg) } : e,
+    );
+    const gain = Math.floor(dmg / 4);
+    const m = state.player.mana;
+    const newMana = {
+      ...m,
+      mana: Math.min(m.maxMana, m.mana + gain),
+      celestial: Math.min(m.maxCelestial, m.celestial + Math.floor(dmg / 12)),
+      infernal: Math.min(m.maxInfernal, m.infernal + Math.floor(dmg / 12)),
+    };
+    const lines = [`${weaponName} → ${dmg} daño a ${targetEnemy.name}.`];
+    if (gain > 0) lines.push(`💧 +${gain} Maná por combate.`);
+
+    resolve({
+      ...state,
+      player: { ...state.player, mana: newMana },
+      combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, ...lines] },
+    });
+  }
+
+  function handleDefend() {
+    if (!isPlayerTurn) return;
+    const gain = 8;
+    const m = state.player.mana;
+    resolve(
+      addLog(
+        {
+          ...state,
+          player: {
+            ...state.player,
+            mana: { ...m, mana: Math.min(m.maxMana, m.mana + gain) },
+            statusEffects: [
+              ...state.player.statusEffects.filter((e) => e.type !== "guarding"),
+              { type: "guarding", duration: 1, permanent: true },
+            ],
+          },
+        },
+        `🛡️ Te pones en guardia (+${gain} maná). Recibirás la mitad de daño hasta tu próximo turno.`,
+      ),
+    );
+  }
+
+  function handleCastAbility(ability: Spell | Skill) {
+    if (!isPlayerTurn) return;
+    if (Math.random() < sanityEff.missChance) {
+      return resolve(addLog(state, "Tu mente fragmentada interrumpe el hechizo."));
+    }
+    const eff = getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects);
+    const p = state.player;
+
+    if (ability.areaEffect) {
+      const r = castAbilityArea(
+        ability, p.mana, p.elementAffinity, p.elementLevels, state.combat.enemies,
+        p.stats, p.statusEffects, eff.magical_strength, eff.physical_strength,
+      );
+      if (!r.success) return setState(addLog(state, ...r.messages));
+      const levels =
+        "element" in ability && allEnemiesDead(r.newEnemies)
+          ? grantXpToElement(p.elementLevels, ability.element, 2)
+          : p.elementLevels;
+      resolve({
+        ...state,
+        player: { ...p, stats: r.newPlayerStats, mana: r.newMana, statusEffects: r.newPlayerEffects, elementLevels: levels },
+        combat: { ...state.combat, enemies: r.newEnemies, log: [...state.combat.log, ...r.messages] },
+      });
+      return;
     }
 
-    // ── Physical attack ────────────────────────────────────────────────────
-    function handlePhysicalAttack() {
-        if (!targetEnemy || combat.turn !== "player") return;
+    if (!targetEnemy && ability.targetType !== "self") return;
 
-        // Sanity miss chance
-        if (Math.random() < sanityEff.missChance) {
-            const s = addLog(state, `Tu mente falla... el ataque se pierde en el aire.`);
-            doEnemyTurn({ ...s, combat: { ...s.combat, turn: "enemy" } });
-            return;
-        }
+    const r = castAbilitySingle(
+      ability, p.mana, p.elementAffinity, p.elementLevels,
+      targetEnemy ?? state.combat.enemies[0], p.stats, p.statusEffects,
+      eff.magical_strength, eff.physical_strength,
+    );
+    if (!r.success) return setState(addLog(state, ...r.messages));
+    if (ability.targetType !== "self") flashEnemy(targetIdx);
 
-        const effectiveStats = getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects);
-        const dmg = Math.max(1, effectiveStats.physical_strength - Math.floor(targetEnemy.resistance / 2));
-        const weaponName = state.player.equipment.mainHand?.name ?? "Ataque físico";
+    const newEnemies = state.combat.enemies.map((e, i) => (i === targetIdx ? r.newEnemy : e));
+    const levels =
+      "element" in ability && allEnemiesDead(newEnemies)
+        ? grantXpToElement(p.elementLevels, ability.element, 2)
+        : p.elementLevels;
+    resolve({
+      ...state,
+      player: { ...p, stats: r.newPlayerStats, mana: r.newMana, statusEffects: r.newPlayerEffects, elementLevels: levels },
+      combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, ...r.messages] },
+    });
+  }
 
-        flashEnemy(combat.selectedEnemyIndex);
-
-        const newEnemies = state.combat.enemies.map((e) =>
-            e === targetEnemy ? { ...e, hp: Math.max(0, e.hp - dmg) } : e,
-        );
-
-        const normalGain = Math.floor(dmg / 4);
-        const celestialGain = Math.floor(dmg / 12);
-        const infernalGain = Math.floor(dmg / 12);
-        const newMana = {
-            ...state.player.mana,
-            mana: Math.min(state.player.mana.maxMana, state.player.mana.mana + normalGain),
-            celestial: Math.min(state.player.mana.maxCelestial, state.player.mana.celestial + celestialGain),
-            infernal: Math.min(state.player.mana.maxInfernal, state.player.mana.infernal + infernalGain),
-        };
-
-        const logLines = [`${weaponName} → ${dmg} daño a ${targetEnemy.name}.`];
-        if (normalGain > 0) logLines.push(`💧 +${normalGain} Maná por combate.`);
-
-        let ns: GameState = {
-            ...state,
-            player: { ...state.player, mana: newMana },
-            combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, ...logLines] },
-        };
-
-        if (allEnemiesDead(newEnemies)) {
-            handleVictory(ns);
-            return;
-        }
-
-        const newLiving = newEnemies.filter((e) => e.hp > 0);
-        const newSelected = Math.min(combat.selectedEnemyIndex, newLiving.length - 1);
-        doEnemyTurn({ ...ns, combat: { ...ns.combat, enemies: newEnemies, selectedEnemyIndex: newSelected, turn: "enemy" } });
-    }
-
-    // ── Cast ability ───────────────────────────────────────────────────────
-    function handleCastAbility(ability: Spell | Skill) {
-        if (combat.turn !== "player") return;
-
-        // Sanity miss chance
-        if (Math.random() < sanityEff.missChance) {
-            const s = addLog(state, `Tu mente fragmentada interrumpe el hechizo.`);
-            doEnemyTurn({ ...s, combat: { ...s.combat, turn: "enemy" } });
-            return;
-        }
-
-        const effectiveStats = getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects);
-        const magicBonus = effectiveStats.magical_strength - state.player.stats.magical_strength;
-        const physicalBonus = effectiveStats.physical_strength - state.player.stats.physical_strength;
-
-        if (ability.areaEffect) {
-            const { newMana, newEnemies, newPlayerStats, newPlayerEffects, messages, success } =
-                castAbilityArea(ability, state.player.mana, state.player.elementAffinity, state.player.elementLevels,
-                    state.combat.enemies, state.player.stats, state.player.statusEffects, magicBonus, physicalBonus);
-
-            if (!success) {
-                setState(addLog(state, ...messages));
-                return;
-            }
-
-            const ns: GameState = {
-                ...state,
-                player: { ...state.player, stats: newPlayerStats, mana: newMana, statusEffects: newPlayerEffects },
-                combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, ...messages] },
-            };
-
-            if (allEnemiesDead(newEnemies)) {
-                handleVictory({ ...ns, player: { ...ns.player, elementLevels: "element" in ability ? grantXpToElement(state.player.elementLevels, ability.element, 2) : state.player.elementLevels } });
-                return;
-            }
-
-            const newLiving = newEnemies.filter((e) => e.hp > 0);
-            doEnemyTurn({ ...ns, combat: { ...ns.combat, selectedEnemyIndex: Math.min(combat.selectedEnemyIndex, newLiving.length - 1), turn: "enemy" } });
-        } else {
-            if (!targetEnemy && ability.targetType !== "self") return;
-
-            const { newMana, newEnemy, newPlayerStats, newPlayerEffects, messages, success } =
-                castAbilitySingle(ability, state.player.mana, state.player.elementAffinity, state.player.elementLevels,
-                    targetEnemy || state.combat.enemies[0], state.player.stats, state.player.statusEffects, magicBonus, physicalBonus);
-
-            if (!success) {
-                setState(addLog(state, ...messages));
-                return;
-            }
-
-            if (ability.targetType !== "self") flashEnemy(combat.selectedEnemyIndex);
-
-            const newEnemies = state.combat.enemies.map((e) => e === targetEnemy ? newEnemy : e);
-            const ns: GameState = {
-                ...state,
-                player: { ...state.player, stats: newPlayerStats, mana: newMana, statusEffects: newPlayerEffects },
-                combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, ...messages] },
-            };
-
-            if (allEnemiesDead(newEnemies)) {
-                handleVictory({ ...ns, player: { ...ns.player, elementLevels: "element" in ability ? grantXpToElement(state.player.elementLevels, ability.element, 2) : state.player.elementLevels } });
-                return;
-            }
-
-            const newLiving = newEnemies.filter((e) => e.hp > 0);
-            doEnemyTurn({ ...ns, combat: { ...ns.combat, selectedEnemyIndex: Math.min(combat.selectedEnemyIndex, newLiving.length - 1), turn: "enemy" } });
-        }
-    }
-
-    // ── Use item ───────────────────────────────────────────────────────────
-    function handleUseItem(item: Item) {
-        if (!item.usable || !item.onUse || item.quantity < 1) return;
-        const updates = item.onUse(state.player.stats, state.player.mana);
-        const newItems = state.player.items
-            .map((i) => i.id === item.id ? { ...i, quantity: i.quantity - 1 } : i)
-            .filter((i) => i.quantity > 0 || !i.usable);
-
-        const newPlayer = {
+  function handleUseItem(item: Item) {
+    if (!isPlayerTurn || !item.usable || !item.onUse || item.quantity < 1) return;
+    const updates = item.onUse(state.player.stats, state.player.mana);
+    const newItems = state.player.items
+      .map((i) => (i.id === item.id ? { ...i, quantity: i.quantity - 1 } : i))
+      .filter((i) => i.quantity > 0 || !i.usable);
+    resolve(
+      addLog(
+        {
+          ...state,
+          player: {
             ...state.player,
             stats: { ...state.player.stats, ...(updates as any) },
             mana: { ...state.player.mana, ...(updates as any) },
             items: newItems,
-        };
-
-        const ns: GameState = addLog({ ...state, player: newPlayer }, `Usaste ${item.icon} ${item.name}.`);
-        doEnemyTurn({ ...ns, combat: { ...ns.combat, turn: "enemy" } });
-    }
-
-    // ── Flee ───────────────────────────────────────────────────────────────
-    function handleFlee() {
-        if (Math.random() > 0.5) {
-            setState(addLog(state, "Huiste con éxito."));
-            setCombatResult(null);
-            setView("hub");
-        } else {
-            doEnemyTurn(addLog({ ...state, combat: { ...state.combat, turn: "enemy" } }, "No lograste escapar."));
-        }
-    }
-
-    // ── Companion skill action ─────────────────────────────────────────────
-    function handleCompanionSkillUse(companion: Companion, skillIndex: number) {
-        if (combat.turn !== "player") return;
-        const skill = companion.skills[skillIndex];
-        if (!skill || companion.mana.mana < skill.manaCost) return;
-
-        let dmg = skill.damage ?? 20;
-        let logMsg = "";
-        let newEnemies = state.combat.enemies;
-        let newPlayerStats = state.player.stats;
-
-        if (dmg < 0) {
-            const healAmt = Math.abs(dmg);
-            newPlayerStats = {
-                ...newPlayerStats,
-                hp: Math.min(newPlayerStats.maxHp, newPlayerStats.hp + healAmt),
-            };
-            logMsg = `✨ ${companion.name} canaliza ${skill.name} y restaña ${healAmt} PV al jugador.`;
-        } else {
-            if (!targetEnemy) return;
-            newEnemies = state.combat.enemies.map((e) =>
-                e === targetEnemy ? { ...e, hp: Math.max(0, e.hp - dmg) } : e
-            );
-            logMsg = `⚔️ ${companion.name} ejecuta ${skill.name} causando ${dmg} de daño a ${targetEnemy.name}.`;
-        }
-
-        const newParty = (state.player.party ?? []).map((c) =>
-            c.id === companion.id
-                ? { ...c, mana: { ...c.mana, mana: Math.max(0, c.mana.mana - skill.manaCost) } }
-                : c
-        );
-
-        const ns: GameState = {
-            ...state,
-            player: { ...state.player, stats: newPlayerStats, party: newParty },
-            combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, logMsg] },
-        };
-
-        if (allEnemiesDead(newEnemies)) {
-            handleVictory(ns);
-            return;
-        }
-
-        doEnemyTurn({ ...ns, combat: { ...ns.combat, turn: "enemy" } });
-    }
-
-
-    // ── Victory with loot ─────────────────────────────────────────────────
-    function handleVictory(victoryState: GameState) {
-        const loot = resolveLoot(victoryState.combat.enemies);
-        const newItems = mergeLootIntoInventory(victoryState.player.items, loot);
-
-        const lootLines: string[] = [];
-        lootLines.push(`--- Victoria! +${loot.xp} XP ---`);
-        if (loot.gold > 0) lootLines.push(`💰 +${loot.gold} monedas de oro.`);
-        for (const item of loot.items) {
-            lootLines.push(`Obtienes: ${item.icon} ${item.name} x${item.quantity}.`);
-        }
-        if (loot.items.length === 0 && loot.gold === 0) {
-            lootLines.push("Los enemigos no dejaron nada.");
-        }
-
-        setState({
-            ...victoryState,
-            player: {
-                ...victoryState.player,
-                xp: victoryState.player.xp + loot.xp,
-                items: newItems,
-            },
-            combat: {
-                ...victoryState.combat,
-                active: false,
-                log: [...victoryState.combat.log, ...lootLines],
-            },
-        });
-        setCombatResult("victory");
-    }
-
-    // ── Enemy turn ─────────────────────────────────────────────────────────
-    function doEnemyTurn(currentState: GameState) {
-        const { enemies } = currentState.combat;
-
-        let statusMessages: string[] = [];
-        let processedEnemies = enemies.map((enemy) => {
-            if (enemy.hp <= 0) return enemy;
-            const { newEnemy, messages } = applyEnemyStatusEffects(enemy);
-            statusMessages.push(...messages);
-            return newEnemy;
-        });
-
-        if (allEnemiesDead(processedEnemies)) {
-            handleVictory({
-                ...currentState,
-                combat: { ...currentState.combat, enemies: processedEnemies, log: [...currentState.combat.log, ...statusMessages, "Todos los enemigos caen."] },
-            });
-            return;
-        }
-
-        flashPlayer();
-
-        const { newStats: statsAfterStatus, messages: playerStatusMessages, newEffects } =
-            applyPlayerStatusEffects(currentState.player.statusEffects, currentState.player.stats);
-
-        const effectiveDefense = getEffectiveStats(statsAfterStatus, currentState.player.equipment, currentState.player.statusEffects);
-        const enemiesWithStats = processedEnemies.map(getEnemyEffectiveStats);
-        const { newStats: defendedStats, newEnemies: attackEnemies, messages: attackMessages } =
-            allEnemiesAttack(enemiesWithStats, effectiveDefense);
-
-        const afterAttackEnemies = processedEnemies.map((baseEnemy, i) => {
-            const attackEnemy = attackEnemies[i];
-            return { ...baseEnemy, hp: attackEnemy.hp, statusEffects: attackEnemy.statusEffects };
-        });
-
-        const hpDiff = effectiveDefense.hp - defendedStats.hp;
-        const newStats = { ...statsAfterStatus, hp: Math.max(0, statsAfterStatus.hp - hpDiff) };
-
-        const allMessages = [...statusMessages, ...playerStatusMessages, ...attackMessages];
-        const newLog = [...currentState.combat.log, `--- Turno enemigo (Ronda ${currentState.combat.round}) ---`, ...allMessages];
-
-        const newPlayer = { ...currentState.player, stats: newStats, statusEffects: newEffects };
-
-        if (isPlayerDead(newStats)) {
-            setState({
-                ...currentState,
-                player: newPlayer,
-                combat: { ...currentState.combat, enemies: afterAttackEnemies, turn: "player", log: [...newLog, "Has caído en combate..."] },
-            });
-            setCombatResult("defeat");
-            setGameOver(true);
-            return;
-        }
-
-        setState({
-            ...currentState,
-            player: newPlayer,
-            combat: {
-                ...currentState.combat,
-                enemies: afterAttackEnemies,
-                turn: "player",
-                round: currentState.combat.round + 1,
-                log: newLog,
-            },
-        });
-    }
-
-    function grantXpToElement(levels: ElementLevels, element: keyof ElementLevels, amount: number): ElementLevels {
-        return { ...levels, [element]: Math.min(100, levels[element] + amount) };
-    }
-
-    function selectTarget(enemy: Enemy) {
-        const idx = combat.enemies.indexOf(enemy);
-        if (idx !== -1) setState({ ...state, combat: { ...state.combat, selectedEnemyIndex: idx } });
-    }
-
-    const getEffectColor = (type: string) => {
-        const buffs = ["strengthened", "velocitized", "invisible"];
-        return buffs.includes(type) ? "#5DCAA5" : "#E24B4A";
-    };
-
-    if (combat.enemies.length === 0) return null;
-
-    const isPlayerTurn = combat.turn === "player";
-
-    return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-
-            {/* Sanity warning */}
-            {sanityEff.message && (
-                <div style={{ background: "#7F77DD22", border: "1px solid #7F77DD44", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#AFA9EC" }}>
-                    🧠 {sanityEff.message}
-                </div>
-            )}
-
-            {/* Enemies panel */}
-            <div style={enemiesPanel}>
-                <div style={{ fontSize: 10, color: "#666", letterSpacing: 1.5, marginBottom: 8 }}>
-                    ENEMIGOS — Ronda {combat.round}
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {combat.enemies.map((enemy, idx) => {
-                        const isDead = enemy.hp <= 0;
-                        const isTarget = !isDead && combat.enemies.indexOf(enemy) === combat.selectedEnemyIndex;
-                        const hpPct = Math.round((enemy.hp / enemy.maxHp) * 100);
-                        const isAnimating = animatingEnemyIdx === idx;
-
-                        return (
-                            <div
-                                key={`${enemy.id}-${idx}`}
-                                style={{
-                                    ...enemyCard,
-                                    opacity: isDead ? 0.35 : 1,
-                                    flex: "1 1 140px",
-                                    cursor: isDead ? "default" : "pointer",
-                                    border: isTarget ? "1px solid #c9a84c99" : "1px solid #c94c4c22",
-                                    position: "relative",
-                                    transform: isAnimating ? "scale(0.96)" : "scale(1)",
-                                    transition: "transform 0.15s, background 0.15s",
-                                    background: isAnimating ? "#2a0a0a" : "#12122a",
-                                }}
-                                onClick={() => !isDead && selectTarget(enemy)}
-                            >
-                                {isTarget && <div style={targetBadge}>🎯 OBJETIVO</div>}
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                                    <div>
-                                        <div style={{ fontSize: 12, fontWeight: 600, color: isDead ? "#555" : "#e55" }}>
-                                            {isDead ? "💀" : ELEMENT_ICON[enemy.element]} {enemy.name}
-                                        </div>
-                                        <div style={{ fontSize: 9, color: "#666" }}>Nv {enemy.level}</div>
-                                    </div>
-                                    <div style={{ fontSize: 10, color: "#aaa", textAlign: "right" }}>
-                                        {isDead ? <span style={{ color: "#333" }}>Muerto</span> : `${enemy.hp}/${enemy.maxHp}`}
-                                    </div>
-                                </div>
-                                <div style={{ height: 4, background: "#222", borderRadius: 2, marginTop: 6 }}>
-                                    <div style={{
-                                        width: `${hpPct}%`, height: "100%",
-                                        background: hpPct > 50 ? "#E24B4A" : hpPct > 25 ? "#FAC775" : "#555",
-                                        borderRadius: 2, transition: "width 0.4s",
-                                    }} />
-                                </div>
-                                {enemy.statusEffects.length > 0 && (
-                                    <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>
-                                        {enemy.statusEffects.map((e, i) => (
-                                            <span key={i} style={{ fontSize: 8, color: getEffectColor(e.type), background: "#12122a", border: `1px solid ${getEffectColor(e.type)}22`, padding: "1px 4px", borderRadius: 3 }}>
-                                                {e.type.toUpperCase()} ({e.duration})
-                                            </span>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Combat log */}
-            <CombatLog log={combat.log} round={combat.round} turn={combat.turn} />
-
-            {/* Player status effects */}
-            {state.player.statusEffects.length > 0 && (
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {state.player.statusEffects.map((eff, i) => (
-                        <div key={i} style={{ fontSize: 10, background: "#1a1a2e", border: `1px solid ${getEffectColor(eff.type)}`, color: getEffectColor(eff.type), padding: "2px 6px", borderRadius: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                            <span>✨ {eff.type}</span>
-                            <span style={{ opacity: 0.7, fontSize: 9 }}>{eff.duration}t</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {/* Player HP bar */}
-            <div style={{ background: "#1a1a2e", border: "1px solid #222", borderRadius: 8, padding: "8px 12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#666", marginBottom: 4 }}>
-                    <span style={{ color: animatingPlayer ? "#E24B4A" : "#888" }}>TU VIDA</span>
-                    <span style={{ color: "#ccc" }}>{state.player.stats.hp}/{state.player.stats.maxHp}</span>
-                </div>
-                <div style={{ height: 6, background: "#222", borderRadius: 3 }}>
-                    <div style={{ width: `${(state.player.stats.hp / state.player.stats.maxHp) * 100}%`, height: "100%", background: state.player.stats.hp > 50 ? "#1D9E75" : state.player.stats.hp > 25 ? "#FAC775" : "#E24B4A", borderRadius: 3, transition: "width 0.4s, background 0.4s" }} />
-                </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-                    {[
-                        { label: "Maná", value: mana.mana, max: mana.maxMana, color: "#378ADD" },
-                        { label: "Celestial", value: mana.celestial, max: mana.maxCelestial, color: "#FAC775" },
-                        { label: "Infernal", value: mana.infernal, max: mana.maxInfernal, color: "#7F77DD" },
-                    ].map(({ label, value, max, color }) => (
-                        <div key={label} style={{ flex: 1, minWidth: 60 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#555" }}>
-                                <span>{label}</span><span style={{ color }}>{value}/{max}</span>
-                            </div>
-                            <div style={{ height: 3, background: "#222", borderRadius: 2 }}>
-                                <div style={{ width: `${max > 0 ? (value / max) * 100 : 0}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.3s" }} />
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Active Party Panel in Combat */}
-            {state.player.party && state.player.party.some((c) => c.isRecruited && c.isActive) && (
-                <CompanionPanel
-                    party={state.player.party}
-                    isCombat={true}
-                    onCompanionSkillUse={handleCompanionSkillUse}
-                />
-            )}
-
-
-            {/* Actions */}
-            <div style={section}>
-                <div style={sectionTitle}>{isPlayerTurn ? "Tu turno — ¿Qué harás?" : "Turno enemigo..."}</div>
-
-                {/* Physical */}
-                <div style={{ marginBottom: 8 }}>
-                    <div style={subLabel}>ATAQUES</div>
-                    <button style={{ ...actionBtn, opacity: isPlayerTurn && targetEnemy ? 1 : 0.4 }} onClick={handlePhysicalAttack} disabled={!isPlayerTurn || !targetEnemy}>
-                        🗡️ {state.player.equipment.mainHand?.name ?? "Ataque físico"}
-                        {targetEnemy && <span style={{ color: "#888", marginLeft: 4, fontSize: 9 }}>→ {targetEnemy.name}</span>}
-                    </button>
-                </div>
-
-                {/* Skills */}
-                {skills.length > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                        <div style={subLabel}>HABILIDADES</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                            {skills.map((skill) => {
-                                const currentMana = skill.manaType === "mana" ? mana.mana : skill.manaType === "celestial" ? mana.celestial : mana.infernal;
-                                const canCast = currentMana >= skill.manaCost && isPlayerTurn;
-                                return (
-                                    <button key={skill.id} onClick={() => handleCastAbility(skill)} disabled={!canCast}
-                                        style={{ ...spellBtn, opacity: canCast ? 1 : 0.4, cursor: canCast ? "pointer" : "not-allowed", border: skill.areaEffect ? "1px solid #E24B4A55" : "1px solid #2a2a4a" }}>
-                                        <span style={{ fontSize: 12 }}>⚔</span>
-                                        <span style={{ fontSize: 10 }}>{skill.name}</span>
-                                        {skill.areaEffect && <span style={{ fontSize: 8, color: "#E24B4A" }}>AOE</span>}
-                                        <span style={{ fontSize: 9, color: MANA_COLOR[skill.manaType] }}>✨{skill.manaCost}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
-
-                {/* Spells */}
-                <div style={{ marginBottom: 8 }}>
-                    <div style={subLabel}>
-                        HECHIZOS
-                        {targetEnemy && <span style={{ color: "#888", fontWeight: "normal" }}> — objetivo: {targetEnemy.name}</span>}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                        {spells.map((spell) => {
-                            const currentMana = spell.manaType === "mana" ? mana.mana : spell.manaType === "celestial" ? mana.celestial : mana.infernal;
-                            const canCast = currentMana >= spell.manaCost && isPlayerTurn;
-                            return (
-                                <button key={spell.id} onClick={() => handleCastAbility(spell)} disabled={!canCast}
-                                    style={{ ...spellBtn, opacity: canCast ? 1 : 0.4, cursor: canCast ? "pointer" : "not-allowed", border: spell.areaEffect ? "1px solid #E24B4A55" : "1px solid #2a2a4a" }}>
-                                    <span style={{ fontSize: 12 }}>{ELEMENT_ICON[spell.element]}</span>
-                                    <span style={{ fontSize: 10 }}>{spell.name}</span>
-                                    {spell.areaEffect && <span style={{ fontSize: 8, color: "#E24B4A" }}>AOE</span>}
-                                    <span style={{ fontSize: 9, color: MANA_COLOR[spell.manaType] }}>−{spell.manaCost}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                {/* Items */}
-                <div style={{ marginBottom: 8 }}>
-                    <div style={subLabel}>ITEMS</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {items.filter((i) => i.usable).map((item) => (
-                            <button key={item.id} style={{ ...actionBtn, opacity: isPlayerTurn ? 1 : 0.4 }} onClick={() => handleUseItem(item)} disabled={!isPlayerTurn}>
-                                {item.icon} {item.name}
-                                <span style={{ fontSize: 9, color: "#888", marginLeft: 4 }}>x{item.quantity}</span>
-                            </button>
-                        ))}
-                        {items.filter((i) => i.usable).length === 0 && (
-                            <span style={{ fontSize: 10, color: "#444", fontStyle: "italic" }}>Sin items usables.</span>
-                        )}
-                    </div>
-                </div>
-
-                {/* Other */}
-                <div>
-                    <div style={subLabel}>OTROS</div>
-                    <button style={{ ...actionBtn, color: "#E24B4A", borderColor: "#E24B4A44", opacity: isPlayerTurn ? 1 : 0.4 }} onClick={handleFlee} disabled={!isPlayerTurn}>
-                        ↩ Huir
-                    </button>
-                </div>
-            </div>
-        </div>
+          },
+        },
+        `Usaste ${item.icon} ${item.name}.`,
+      ),
     );
+  }
+
+  function handleFlee() {
+    if (!isPlayerTurn || !canFlee) return;
+    if (Math.random() > 0.5) {
+      setState({ ...addLog(state, "Huiste con éxito."), combat: { ...state.combat, active: false } });
+      setCombatResult(null);
+      setView("hub");
+    } else {
+      resolve(addLog(state, "No lograste escapar."));
+    }
+  }
+
+  function handleVictory(v: GameState) {
+    const loot = resolveLoot(v.combat.enemies);
+    const newItems = mergeLootIntoInventory(v.player.items, loot);
+
+    const lootLines = [`--- Victoria! +${loot.xp} XP ---`];
+    if (loot.gold > 0) lootLines.push(`💰 +${loot.gold} monedas de oro.`);
+    for (const item of loot.items) lootLines.push(`Obtienes: ${item.icon} ${item.name} x${item.quantity}.`);
+    if (loot.items.length === 0 && loot.gold === 0) lootLines.push("Los enemigos no dejaron nada.");
+
+    const party = (v.player.party ?? []).map((c) => {
+      if (!c.isRecruited) return c;
+      const hp =
+        c.stats.hp <= 0
+          ? Math.ceil(c.stats.maxHp * 0.25)
+          : Math.min(c.stats.maxHp, c.stats.hp + Math.round(c.stats.maxHp * 0.15));
+      return { ...c, stats: { ...c.stats, hp } };
+    });
+
+    const { player: leveled, levelUps } = gainXp({ ...v.player, items: newItems, party }, loot.xp);
+    setState({
+      ...v,
+      player: leveled,
+      combat: { ...v.combat, active: false, log: [...v.combat.log, ...lootLines] },
+    });
+    setCombatResult("victory");
+    if (levelUps.length) announceLevelUps(levelUps, setState);
+  }
+
+  function grantXpToElement(levels: ElementLevels, element: keyof ElementLevels, amount: number): ElementLevels {
+    return { ...levels, [element]: Math.min(100, levels[element] + amount) };
+  }
+
+  function selectTarget(idx: number) {
+    setState({ ...state, combat: { ...state.combat, selectedEnemyIndex: idx } });
+  }
+
+  // ── Filas de las listas ────────────────────────────────────────────────
+  function abilityRows(list: (Spell | Skill)[]): Row[] {
+    const p = state.player;
+    return list.map((a) => {
+      const cost = getEffectiveCost(a, p.elementAffinity);
+      const element = "element" in a ? a.element : null;
+      const reqLevel = "element" in a ? a.requiredLevel : 0;
+      const locked = element !== null && p.elementLevels[element] < reqLevel;
+      const ok = isPlayerTurn && canCast(a, mana, p.elementLevels, p.elementAffinity);
+      return {
+        key: a.id,
+        icon: element ? ELEMENT_ICON[element] : "⚔",
+        name: a.name,
+        tag: a.areaEffect ? "AOE" : undefined,
+        right: locked ? `Nv${reqLevel}` : String(cost),
+        rightColor: locked ? "#E24B4A" : MANA_COLOR[a.manaType],
+        disabled: !ok,
+        onClick: () => handleCastAbility(a),
+        info: {
+          title: a.name,
+          description: locked ? `Requiere nivel ${reqLevel} en ese elemento. ${a.description}` : a.description,
+          cost: `${cost} ${a.manaType}`,
+          costColor: MANA_COLOR[a.manaType],
+          damage: a.damage,
+          heal: a.heal,
+          target: a.areaEffect ? "Todos los enemigos" : a.targetType === "self" ? "Tú" : (targetEnemy?.name ?? "Enemigo"),
+          effects: a.effects?.map((e) => `${e.type} (${e.permanent ? "∞" : `${e.duration}t`})`),
+        },
+      };
+    });
+  }
+
+  const itemRows: Row[] = items
+    .filter((i) => i.usable)
+    .map((item) => ({
+      key: item.id,
+      icon: item.icon,
+      name: item.name,
+      right: `x${item.quantity}`,
+      rightColor: "#888",
+      disabled: !isPlayerTurn,
+      onClick: () => handleUseItem(item),
+      info: { title: item.name, description: item.description ?? "Objeto consumible.", target: "Tú" },
+    }));
+
+  const rows: Row[] = tab === "skills" ? abilityRows(skills) : tab === "spells" ? abilityRows(spells) : itemRows;
+
+  const defaultInfo: Info | null = targetEnemy
+    ? {
+        title: `🎯 ${targetEnemy.name}`,
+        description: SHOW_WEAKNESS
+          ? `Nv ${targetEnemy.level} · ${targetEnemy.weakness ? `Débil a ${ELEMENT_ICON[targetEnemy.weakness]}` : "Sin debilidad conocida"}${targetEnemy.immunity ? ` · Inmune a ${ELEMENT_ICON[targetEnemy.immunity]}` : ""}`
+          : `Nv ${targetEnemy.level}`,
+        target: `Res ${targetEnemy.resistance} · R.Mág ${targetEnemy.magicResistance} · Vel ${targetEnemy.speed}`,
+      }
+    : null;
+  const shown = info ?? defaultInfo;
+
+  if (combat.enemies.length === 0) return null;
+
+  const lastLines = combat.log.slice(-3);
+  const playerStats = state.player.stats;
+  const pm = state.player.mana;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+      {/* Barra superior: ronda, iniciativa, turno */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, letterSpacing: 1.5, color: "#c9a84c" }}>⚔ RONDA {combat.round}</span>
+        {bossFight && <span style={{ ...chip, color: "#ff9a3c", borderColor: "#ff9a3c66" }}>👑 JEFE</span>}
+        {sanityEff.message && (
+          <span title={sanityEff.message} style={{ ...chip, color: "#AFA9EC", borderColor: "#7F77DD66" }}>
+            🧠 {sanityEff.message.split(" — ")[0]}
+          </span>
+        )}
+        <div style={{ flex: 1, minWidth: 140 }}>
+          <TurnOrderBar state={state} compact />
+        </div>
+        <span style={{
+          ...chip,
+          color: isPlayerTurn ? "#5DCAA5" : "#E24B4A",
+          borderColor: isPlayerTurn ? "#5DCAA566" : "#E24B4A66",
+        }}>
+          {isPlayerTurn ? "🟢 TU TURNO" : "🔴 ENEMIGOS"}
+        </span>
+      </div>
+
+      {/* Campo de batalla */}
+      <div style={{ ...stage, boxShadow: bossFight ? "inset 0 0 50px #ff6b0033" : "none" }}>
+        <BattleBackdrop chapterId={state.narrative.chapterId} />
+        <div style={{ position: "relative", zIndex: 1, display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 14, padding: "14px 14px", alignItems: "center", minHeight: 250 }}>
+          {/* Enemigos (izquierda) */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {combat.enemies.map((enemy, idx) => (
+              <EnemyTile
+                key={`${enemy.id}-${idx}`}
+                enemy={enemy}
+                selected={idx === targetIdx}
+                shaking={shakeEnemy === idx}
+                popups={popups.filter((p) => p.target === `e${idx}`)}
+                onSelect={() => selectTarget(idx)}
+              />
+            ))}
+          </div>
+
+          {/* Grupo (derecha) */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <PartyRow
+              name={PLAYER_NAME}
+              portrait={PLAYER_NAME}
+              hp={playerStats.hp}
+              maxHp={playerStats.maxHp}
+              bars={[
+                { label: "Maná", value: pm.mana, max: pm.maxMana, color: MANA_COLOR.mana },
+                { label: "Celestial", value: pm.celestial, max: pm.maxCelestial, color: MANA_COLOR.celestial },
+                { label: "Infernal", value: pm.infernal, max: pm.maxInfernal, color: "#7F77DD" },
+              ]}
+              active={isPlayerTurn && actor?.kind === "player"}
+              hit={hitPlayer}
+              popups={popups.filter((p) => p.target === "player")}
+              effects={state.player.statusEffects}
+            />
+            {partyActive.map((c) => (
+              <PartyRow
+                key={c.id}
+                name={c.name}
+                portrait={c.name}
+                hp={c.stats.hp}
+                maxHp={c.stats.maxHp}
+                bars={[{ label: "Maná", value: c.mana.mana, max: c.mana.maxMana, color: MANA_COLOR.mana }]}
+                dead={c.stats.hp <= 0}
+                popups={popups.filter((p) => p.target === c.id)}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Ventana de mensajes */}
+      <div style={messageWindow}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {lastLines.length === 0 ? (
+            <div style={{ color: "#555", fontStyle: "italic", fontSize: 11 }}>El combate comienza…</div>
+          ) : (
+            lastLines.map((line, i) => {
+              const last = i === lastLines.length - 1;
+              return (
+                <div key={combat.log.length - lastLines.length + i} style={{
+                  fontSize: last ? 12 : 10, lineHeight: 1.5, fontFamily: "Georgia, serif",
+                  opacity: last ? 1 : 0.45 + i * 0.2, ...getLineStyle(line),
+                }}>
+                  {line}
+                </div>
+              );
+            })
+          )}
+        </div>
+        <button onClick={() => setShowLog((v) => !v)} style={logBtn} title="Ver el registro completo">
+          📜 {showLog ? "Cerrar" : "Registro"}
+        </button>
+      </div>
+      {showLog && <CombatLog log={combat.log} round={combat.round} turn={combat.turn} />}
+
+      {/* Ventana de comandos */}
+      <div style={commandWindow}>
+        {/* Menú */}
+        <div style={{ borderRight: "1px solid #2a2a4a", paddingRight: 4, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <MenuBtn icon="🗡️" label="Atacar" disabled={!isPlayerTurn || !targetEnemy} onClick={handlePhysicalAttack}
+            onHover={(on) => setInfo(on ? {
+              title: state.player.equipment.mainHand?.name ?? "Ataque físico",
+              description: "Golpe directo contra el objetivo con tu arma equipada. Recuperas algo de maná.",
+              damage: physicalPreview(),
+              target: targetEnemy?.name ?? "Sin objetivo",
+            } : null)} />
+          <MenuBtn icon="🛡️" label="Defender" disabled={!isPlayerTurn} onClick={handleDefend}
+            onHover={(on) => setInfo(on ? {
+              title: "Defender",
+              description: "Recibes la mitad de daño hasta tu próximo turno y recuperas 8 de maná.",
+              cost: "+8 Maná", costColor: "#5DCAA5", target: "Tú",
+            } : null)} />
+          <MenuBtn icon="✦" label="Habilidades" badge={String(skills.length)} active={tab === "skills"} onClick={() => setTab("skills")} onHover={() => {}} />
+          <MenuBtn icon="🔮" label="Hechizos" badge={String(spells.length)} active={tab === "spells"} onClick={() => setTab("spells")} onHover={() => {}} />
+          <MenuBtn icon="🎒" label="Objetos" badge={String(itemRows.length)} active={tab === "items"} onClick={() => setTab("items")} onHover={() => {}} />
+          <MenuBtn icon={canFlee ? "🏃" : "🔒"} label="Huir" danger disabled={!isPlayerTurn || !canFlee} onClick={handleFlee}
+            onHover={(on) => setInfo(on ? {
+              title: "Huir",
+              description: canFlee ? "Intentas escapar (50% de éxito)." : "No puedes huir de este combate.",
+            } : null)} />
+        </div>
+
+        {/* Lista */}
+        <div style={{ overflowY: "auto", paddingRight: 2 }}>
+          {rows.length === 0 ? (
+            <div style={{ fontSize: 11, color: "#555", fontStyle: "italic", padding: 8 }}>
+              {tab === "skills" ? "Aún no conoces habilidades. Sube de nivel para aprenderlas." : tab === "items" ? "Sin objetos usables." : "Sin hechizos."}
+            </div>
+          ) : (
+            rows.map((r) => (
+              <div
+                key={r.key}
+                onClick={r.disabled ? undefined : r.onClick}
+                onMouseEnter={() => setInfo(r.info)}
+                onMouseLeave={() => setInfo(null)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 4,
+                  fontSize: 11, color: "#ddd",
+                  background: info?.title === r.info.title ? "#c9a84c1a" : "transparent",
+                  opacity: r.disabled ? 0.38 : 1,
+                  cursor: r.disabled ? "not-allowed" : "pointer",
+                }}
+              >
+                <span style={{ width: 16, textAlign: "center" }}>{r.icon}</span>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+                {r.tag && <span style={{ fontSize: 8, color: "#E24B4A", background: "#E24B4A22", padding: "0 4px", borderRadius: 3 }}>{r.tag}</span>}
+                <span style={{ fontSize: 10, fontWeight: 700, color: r.rightColor, minWidth: 28, textAlign: "right" }}>{r.right}</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Inspector */}
+        <div style={{ borderLeft: "1px solid #2a2a4a", paddingLeft: 10, fontSize: 11, overflowY: "auto" }}>
+          {shown ? (
+            <>
+              <div style={{ fontWeight: 700, color: "#c9a84c", marginBottom: 4 }}>{shown.title}</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+                {shown.damage ? <span style={{ ...tag, color: "#ff6b6b" }}>⚔ {shown.damage}</span> : null}
+                {shown.heal ? <span style={{ ...tag, color: "#5DCAA5" }}>❤ +{shown.heal}</span> : null}
+                {shown.cost && <span style={{ ...tag, color: shown.costColor ?? "#378ADD" }}>{shown.cost}</span>}
+              </div>
+              <div style={{ color: "#bbb", lineHeight: 1.4 }}>{shown.description}</div>
+              {shown.effects && shown.effects.length > 0 && (
+                <div style={{ color: "#AFA9EC", marginTop: 4, fontSize: 10 }}>✨ {shown.effects.join(", ")}</div>
+              )}
+              {shown.target && <div style={{ color: "#777", marginTop: 4, fontSize: 10 }}>🎯 {shown.target}</div>}
+            </>
+          ) : (
+            <div style={{ color: "#555", fontStyle: "italic" }}>Pasa el cursor sobre una acción.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-const enemiesPanel: React.CSSProperties = { background: "#1a1a2e", border: "1px solid #2a1a1a", borderRadius: 8, padding: 12 };
-const enemyCard: React.CSSProperties = { background: "#12122a", borderRadius: 8, padding: 10 };
-const targetBadge: React.CSSProperties = { position: "absolute", top: -8, left: 8, fontSize: 8, color: "#c9a84c", background: "#1a1a2e", padding: "1px 5px", borderRadius: 4, letterSpacing: 1 };
-const section: React.CSSProperties = { background: "#1a1a2e", border: "1px solid #222", borderRadius: 8, padding: 12 };
-const sectionTitle: React.CSSProperties = { fontSize: 11, letterSpacing: 1.5, color: "#c9a84c", marginBottom: 10 };
-const subLabel: React.CSSProperties = { fontSize: 10, color: "#555", letterSpacing: 1.5, marginBottom: 6, fontWeight: "bold" as const };
-const spellBtn: React.CSSProperties = { background: "#12122a", borderRadius: 6, padding: "5px 10px", display: "flex", alignItems: "center", gap: 5, color: "#ccc", fontFamily: "Georgia, serif", cursor: "pointer" };
-const actionBtn: React.CSSProperties = { background: "#12122a", border: "1px solid #2a2a4a", borderRadius: 6, padding: "7px 12px", color: "#ccc", cursor: "pointer", fontSize: 11, fontFamily: "Georgia, serif" };
+const PLAYER_NAME = "Kael'Rin";
+
+// ─── Estilos ───────────────────────────────────────────────────────────────
+const stage: React.CSSProperties = {
+  position: "relative", overflow: "hidden", borderRadius: 10, border: "1px solid #2a2a4a",
+};
+const messageWindow: React.CSSProperties = {
+  display: "flex", gap: 10, alignItems: "center", minHeight: 62,
+  background: "linear-gradient(180deg, #14142a, #0d0d1a)",
+  border: "1px solid #c9a84c44", borderRadius: 8, padding: "8px 12px",
+};
+const commandWindow: React.CSSProperties = {
+  display: "grid", gridTemplateColumns: "128px 1fr 200px", gap: 10, height: 190,
+  background: "linear-gradient(180deg, #14142a, #0d0d1a)",
+  border: "1px solid #c9a84c44", borderRadius: 8, padding: 8,
+};
+const chip: React.CSSProperties = {
+  fontSize: 10, padding: "2px 8px", borderRadius: 4, border: "1px solid #333",
+  fontWeight: 700, letterSpacing: 1, background: "#0d0d1a",
+};
+const tag: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, background: "#ffffff0d", padding: "1px 5px", borderRadius: 3,
+};
+const logBtn: React.CSSProperties = {
+  background: "transparent", color: "#888", border: "1px solid #333", borderRadius: 5,
+  padding: "4px 8px", fontSize: 10, cursor: "pointer", fontFamily: "Georgia, serif", flexShrink: 0,
+};
+const arrow: React.CSSProperties = {
+  position: "absolute", left: -11, top: "50%", transform: "translateY(-50%)",
+  color: "#c9a84c", fontSize: 12, animation: "nudge 0.9s ease-in-out infinite",
+};
+const floater: React.CSSProperties = {
+  position: "absolute", right: 12, top: -6, fontSize: 18, fontWeight: 800, zIndex: 5,
+  pointerEvents: "none", textShadow: "0 0 6px #000, 0 2px 4px #000", animation: "floatUp 1s ease-out forwards",
+};

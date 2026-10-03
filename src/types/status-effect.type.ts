@@ -11,7 +11,8 @@ export type StatusEffectType =
     | "cursed" // oscuridad: penalización progresiva
     | "burning" // fuego+oscuridad: Amaterasu, no se apaga
     | "mana_drain" // oscuridad: pierde maná por turno
-    | "velocitized"; //vital: velocidad aumentada
+    | "velocitized"
+    | "guarding"; //vital: velocidad aumentada
 
 export interface StatusEffect {
     type: StatusEffectType;

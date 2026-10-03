@@ -61,7 +61,7 @@ export function getEndingDetails(
         };
     }
 
-    if (party.length >= 2 && xp >= 350) {
+    if (party.filter((c) => c.isRecruited).length >= 2 && xp >= 350) {
         return {
             id: "party_hero",
             title: "FINAL IV: La Alianza de las Sombras y la Luz",

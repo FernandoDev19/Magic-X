@@ -71,6 +71,73 @@ export function buildInventory(ids: string[]): Item[] {
     }));
 }
 
+/** Aplica el efecto de un consumible resolviendo onUse desde la definición base si se perdió al serializar */
+export function useConsumableItem(
+    player: GameState["player"],
+    item: Item
+): { newPlayer: GameState["player"]; message: string } | null {
+    const baseItem = ALL_ITEMS[item.id];
+    const onUse = item.onUse ?? baseItem?.onUse;
+    if (!onUse || item.quantity < 1) return null;
+
+    const updates: any = onUse(player.stats, player.mana);
+
+    const newStats = { ...player.stats };
+    const newMana = { ...player.mana };
+
+    const msgParts: string[] = [];
+
+    if (updates.hp !== undefined) {
+        const hpBefore = newStats.hp;
+        newStats.hp = Math.min(newStats.maxHp, Math.max(newStats.hp, updates.hp));
+        const diff = newStats.hp - hpBefore;
+        if (diff > 0) msgParts.push(`+${diff} PV`);
+    }
+    if (updates.mana !== undefined) {
+        const manaBefore = newMana.mana;
+        newMana.mana = Math.min(newMana.maxMana, Math.max(newMana.mana, updates.mana));
+        const diff = newMana.mana - manaBefore;
+        if (diff > 0) msgParts.push(`+${diff} Maná`);
+    }
+    if (updates.celestial !== undefined) {
+        const celBefore = newMana.celestial;
+        if (updates.celestial > newMana.maxCelestial) {
+            newMana.maxCelestial = updates.celestial;
+        }
+        newMana.celestial = Math.min(newMana.maxCelestial, Math.max(newMana.celestial, updates.celestial));
+        const diff = newMana.celestial - celBefore;
+        if (diff > 0) msgParts.push(`+${diff} Celestial`);
+    }
+    if (updates.infernal !== undefined) {
+        const infBefore = newMana.infernal;
+        if (updates.infernal > newMana.maxInfernal) {
+            newMana.maxInfernal = updates.infernal;
+        }
+        newMana.infernal = Math.min(newMana.maxInfernal, Math.max(newMana.infernal, updates.infernal));
+        const diff = newMana.infernal - infBefore;
+        if (diff > 0) msgParts.push(`+${diff} Infernal`);
+    }
+
+    const newItems = player.items
+        .map((i) => (i.id === item.id ? { ...i, quantity: i.quantity - 1 } : i))
+        .filter((i) => i.quantity > 0 || !i.usable);
+
+    const icon = item.icon ?? baseItem?.icon ?? "🧪";
+    const name = item.name ?? baseItem?.name ?? "Objeto";
+    const detailText = msgParts.length > 0 ? ` (${msgParts.join(", ")})` : "";
+    const message = `Usaste ${icon} ${name}${detailText}.`;
+
+    return {
+        newPlayer: {
+            ...player,
+            stats: newStats,
+            mana: newMana,
+            items: newItems,
+        },
+        message,
+    };
+}
+
 // Convert all equipment into usable items
 Object.entries(ALL_EQUIPMENT).forEach(([id, eq]) => {
     if (!ALL_ITEMS[id]) {

@@ -31,4 +31,10 @@ export interface Quest {
     triggeredByLocation?: string;
     /** optional companion id this quest is about */
     companionId?: string;
+    rewardClaimed?: boolean;
+}
+
+export interface QuestRef {
+    questId: string;
+    objectiveId: string;
 }

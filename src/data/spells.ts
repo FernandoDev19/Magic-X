@@ -2,7 +2,7 @@ import type { Spell } from "../types/spell.type";
 
 // ─── FUEGO ────────────────────────────────────────────────
 export const FIRE_SPELLS: Spell[] = [
-    {
+   {
         id: "fireball_1",
         name: "Bola de fuego",
         targetType: "enemy",
@@ -10,9 +10,9 @@ export const FIRE_SPELLS: Spell[] = [
         requiredLevel: 1,
         manaCost: 15,
         manaType: "mana",
-        damage: 20,
+        damage: 16,
         effects: [{ type: "ignition", duration: 2, value: 5 }],
-        description: "Bola ígnea. 60% prob. de ignición (+5 daño/turno).",
+        description: "Aplica Ignición. Si el enemigo está [Mojado], consume el estado para causar un 50% más de daño crítico inmediato (Evaporación).",
     },
     {
         id: "explosion_1",
@@ -20,37 +20,35 @@ export const FIRE_SPELLS: Spell[] = [
         targetType: "enemy",
         element: "fire",
         requiredLevel: 1,
-        manaCost: 7,
+        manaCost: 12,
         manaType: "mana",
         damage: 10,
         areaEffect: true,
-        description: "Explosión de área. Daño escala con nivel de fuego.",
+        description: "Explosión en área. Detona instantáneamente a cualquier enemigo afectado por [Ignición], causando que el daño de su quemadura explote y golpee a los enemigos adyacentes.",
     },
-    {
+       {
         id: "lava_floor_1",
         name: "Suelo de lava",
         targetType: "enemy",
         element: "fire",
         requiredLevel: 5,
-        manaCost: 7,
+        manaCost: 20,
         manaType: "mana",
         damage: 8,
         effects: [{ type: "ignition", duration: 3, value: 8 }],
         areaEffect: true,
-        description:
-            "Crea lava en el suelo. Daño continuo por 3 turnos a todos los enemigos.",
+        description: "Modifica el entorno por 3 turnos. Al inicio de cada turno, los enemigos sufren daño de fuego y reduce su [Velocidad] en un 15% por el lodo denso.",
     },
     {
         id: "temp_manipulation_heat",
-        name: "Manipulación de temperatura",
+        name: "Onda de calor hiperbárica",
         targetType: "area",
         element: "fire",
         requiredLevel: 10,
         manaCost: 40,
         manaType: "mana",
         effects: [{ type: "weakened", duration: 3, value: 20 }],
-        description:
-            "Sube la temperatura del área. +20% crit y -20 Resistencia a enemigos no afines.",
+        description: "Sube la temperatura drásticamente. Aumenta la probabilidad de crítico del jugador en un 20% y reduce la Resistencia Mágica enemiga. Los hechizos de Agua duplican su coste de maná mientras esté activo.",
     },
 ];
 
@@ -58,14 +56,13 @@ export const FIRE_SPELLS: Spell[] = [
 export const EARTH_SPELLS: Spell[] = [
     {
         id: "earth_wall_1",
-        name: "Muro de tierra",
+        name: "Baluarte geotérmico",
         targetType: "area",
         element: "earth",
         requiredLevel: 1,
         manaCost: 20,
         manaType: "mana",
-        description:
-            "Crea un muro defensivo. +15 Resistencia y -10 daño de rayos por nivel.",
+        description: "Crea una barrera rúnica. Otorga al jugador un escudo equivalente al 20% de su HP Máximo. Mientras el escudo resista, Kael'Rin es inmune a interrupciones de lanzamiento.",
     },
     {
         id: "earth_blades_1",
@@ -80,16 +77,15 @@ export const EARTH_SPELLS: Spell[] = [
     },
     {
         id: "earth_spikes",
-        name: "Púas de tierra",
+        name: "Púas de confinamiento",
         targetType: "enemy",
         element: "earth",
         requiredLevel: 6,
-        manaCost: 20,
+        manaCost: 25,
         manaType: "mana",
-        damage: 25,
+        damage: 22,
         effects: [{ type: "paralyzed", duration: 1 }],
-        description:
-            "Grandes púas que surgen del suelo. Traspasan la piel del enemigo.",
+        description: "Empala al enemigo perdiendo 1 turno. Si el enemigo tiene menos del 50% de su [Estabilidad], rompe su postura causándole daño físico masivo adicional.",
     },
     {
         id: "earth_compression",
@@ -104,13 +100,13 @@ export const EARTH_SPELLS: Spell[] = [
     },
     {
         id: "earth_clones_1",
-        name: "Clones de tierra",
-        targetType: "enemy",
+        name: "Estatua de suplantación",
+        targetType: "area",
         element: "earth",
         requiredLevel: 5,
         manaCost: 35,
         manaType: "mana",
-        description: "Crea un clon de tierra que absorbe 1 golpe por turno.",
+        description: "Invoca un clon de roca compacta que desvía la atención. Absorbe el próximo ataque físico dirigido a Kael'Rin y explota al romperse, infligiendo daño de tierra al atacante.",
     },
     {
         id: "meteorite",
@@ -154,27 +150,27 @@ export const WATER_SPELLS: Spell[] = [
     },
     {
         id: "snowball",
-        name: "Bola de nieve",
+        name: "Escarcha ralentizadora",
         targetType: "enemy",
         element: "water",
         requiredLevel: 1,
-        manaCost: 4,
+        manaCost: 10, // Balanceado el coste base por su alta penalización
         manaType: "mana",
         damage: 5,
         effects: [{ type: "slowed", duration: 2, value: 50 }],
-        description: "Poco daño pero ralentiza 50% por 2 turnos.",
+        description: "Aplica [Mojado] y reduce la [Velocidad] enemiga a la mitad por 2 turnos. El setup perfecto para combos eléctricos o de fuego.",
     },
     {
         id: "ice_arrow_1",
-        name: "Flecha de hielo",
+        name: "Flecha de criocongelación",
         targetType: "enemy",
         element: "water",
         requiredLevel: 3,
-        manaCost: 15,
+        manaCost: 22,
         manaType: "mana",
-        damage: 20,
+        damage: 18,
         effects: [{ type: "frozen", duration: 1 }],
-        description: "Flecha de hielo que puede congelar al objetivo.",
+        description: "Dispara un dardo helado. Si el enemigo ya estaba bajo el efecto de [Ralentizado], lo [Congela] instantáneamente por 1 turno, impidiendo que actúe.",
     },
     {
         id: "ice_wall_1",
@@ -188,28 +184,26 @@ export const WATER_SPELLS: Spell[] = [
     },
     {
         id: "rain_1",
-        name: "Lluvia",
+        name: "Diluvio monzónico",
         targetType: "enemy",
         element: "water",
         requiredLevel: 5,
-        manaCost: 28,
+        manaCost: 35,
         manaType: "mana",
-        damage: 10,
+        damage: 8,
         areaEffect: true,
-        description:
-            "Lluvia de área. Daño continuo y puede potenciar hechizos de agua.",
+        description: "Empapa el campo de batalla entero. Aplica [Mojado] a todos los enemigos de forma permanente mientras dure la lluvia. Incrementa el daño de los hechizos de [Rayo] un 40%.",
     },
     {
-        id: "freezing_1",
-        name: "Congelación",
+         id: "freezing_1",
+        name: "Cero absoluto",
         targetType: "enemy",
         element: "water",
         requiredLevel: 8,
-        manaCost: 30,
+        manaCost: 50,
         manaType: "mana",
+        description: "Congela a un objetivo por 2 turnos. Si el enemigo congelado recibe un ataque de tipo [Tierra] (como Compresión o Púas), el hielo se fragmenta causando daño crítico instantáneo basado en su HP restante (Rompehielo).",
         effects: [{ type: "frozen", duration: 2 }],
-        description:
-            "Congela al enemigo por 2 turnos. Más efectiva con enemigos debilitados.",
     },
 ];
 

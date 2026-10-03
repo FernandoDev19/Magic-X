@@ -1,5 +1,6 @@
 import type { Companion } from "../types/companion.type";
 import { smallBtn } from "../App";
+import { Portrait } from "./Portrait";
 
 interface Props {
     party: Companion[];
@@ -86,10 +87,10 @@ export function CompanionPanel({
                                     }}
                                 >
                                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                        <span style={{ fontSize: 18 }}>{comp.avatar}</span>
+                                        <Portrait name={comp.name} size={34} />
                                         <div>
                                             <div style={{ color: "#fff", fontWeight: "bold", fontSize: 13 }}>
-                                                {comp.name}
+                                                {comp.name}{comp.stats.hp <= 0 && " 💀"}
                                             </div>
                                             <div style={{ color: "#aaa", fontSize: 10 }}>{comp.title}</div>
                                         </div>

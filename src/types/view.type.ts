@@ -8,5 +8,6 @@ export type View =
     | "story"
     | "grimoire"
     | "party"
-    | "quests";
+    | "quests"
+    | "scene";
 

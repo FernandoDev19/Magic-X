@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
 interface Props {
+    className?: string;
     log: string[];
     round: number;
     turn: "player" | "enemy";
 }
 
 const LINE_COLORS: { test: (s: string) => boolean; color: string; bg?: string; bold?: boolean }[] = [
+    { test: s => s.includes("⚠️ FASE"), color: "#ff9a3c", bold: true, bg: "#2a1405" },
     { test: s => s.includes("DEBILIDAD"), color: "#FAC775", bold: true },
     { test: s => s.includes("Victoria") || s.includes("victoria") || s.includes("--- Victoria"), color: "#4ae286", bold: true, bg: "#0a2a15" },
     { test: s => s.includes("caído") || s.includes("muere") || s.includes("derrota") || s.includes("Has caído"), color: "#E24B4A", bold: true },
@@ -23,7 +25,7 @@ const LINE_COLORS: { test: (s: string) => boolean; color: string; bg?: string; b
     { test: s => s.includes("🔄") || s.includes("Refrescado"), color: "#8ab4f8" },
 ];
 
-function getLineStyle(line: string): React.CSSProperties {
+export function getLineStyle(line: string): React.CSSProperties {
     for (const rule of LINE_COLORS) {
         if (rule.test(line)) {
             return {
@@ -38,7 +40,7 @@ function getLineStyle(line: string): React.CSSProperties {
     return { color: "#c0c0c0" };
 }
 
-export function CombatLog({ log, round, turn }: Props) {
+export function CombatLog({ className, log, round, turn }: Props) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [lastCount, setLastCount] = useState(log.length);
     const [isFlashing, setIsFlashing] = useState(false);
@@ -57,7 +59,7 @@ export function CombatLog({ log, round, turn }: Props) {
     const lastLine = log[log.length - 1] ?? null;
 
     return (
-        <div style={{
+        <div className={className || ""} style={{
             background: "#08080f",
             border: `2px solid ${isFlashing ? "#c9a84c88" : "#1a1a2e"}`,
             borderRadius: 10,

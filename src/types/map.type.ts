@@ -1,3 +1,5 @@
+import type { QuestRef } from "./quest.type";
+
 export type NodeType =
     | "combat"
     | "elite"
@@ -30,6 +32,10 @@ export interface MapNode {
     companionId?: string;
     /** Optional quest triggered when visiting this node */
     questId?: string;
+        /** Escena (data/scenes.ts) que se abre al ejecutar el nodo */
+    sceneId?: string;
+    /** Objetivos de misión que completa este nodo */
+    completes?: QuestRef[];
 }
 
 export interface ChapterMap {
