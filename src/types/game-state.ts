@@ -10,6 +10,7 @@ import type { StatusEffect } from "./status-effect.type";
 import type { Companion } from "./companion.type";
 import type { ChapterMap } from "./map.type";
 import type { Quest, QuestRef } from "./quest.type";
+import type { SpellRecipe } from "./rune.type";
 import type { View } from "./view.type";
 
 export interface NarrativeEffect {
@@ -108,6 +109,8 @@ export type GameState = {
     elementLevels: ElementLevels;
     elementAffinity: ElementAffinity;
     spells: Spell[];
+    /** Recetas guardadas del círculo mágico (los hechizos clásicos de `spells` también cuentan como recetas) */
+    recipes?: SpellRecipe[];
     items: Item[];
     equipment: EquippedGear;
     statusEffects: StatusEffect[];

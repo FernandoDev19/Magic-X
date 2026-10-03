@@ -1,4 +1,5 @@
 import type { Item } from "../types/item.type";
+import type { GameState } from "../types/game-state";
 import { ALL_EQUIPMENT } from "./equipment";
 
 export const ALL_ITEMS: Record<string, Item> = {

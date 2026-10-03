@@ -2,11 +2,18 @@ import { useState } from "react";
 import type { Spell } from "../types/spell.type";
 import type { ElementLevels } from "../types/magic-element.type";
 import { filterActive, filterBtn, gCard, gTitle } from "../App";
-import { MAGIC_SCHOOLS } from "../data/magic";
+import { MAGIC_SCHOOLS, getSchool } from "../data/magic";
+import { getRune } from "../data/runes";
+import type { SpellRecipe } from "../types/rune.type";
+import { forgeName } from "../utils/spell-forge";
 
-type Props = { playerSpells: Spell[]; elementLevels: ElementLevels };
+type Props = { playerSpells: Spell[]; elementLevels: ElementLevels; recipes?: SpellRecipe[] };
 
-export default function GrimoireView({ playerSpells, elementLevels }: Props) {
+const SOURCE_LABEL: Record<string, string> = {
+    crafted: "Forjada por ti", found: "Encontrada", bought: "Comprada", story: "Heredada",
+};
+
+export default function GrimoireView({ playerSpells, elementLevels, recipes = [] }: Props) {
     const [filter, setFilter] = useState<string>("all");
 
     // Mostrar solo los hechizos que el jugador conoce
@@ -74,6 +81,38 @@ export default function GrimoireView({ playerSpells, elementLevels }: Props) {
                         </button>
                     );
                 })}
+            </div>
+
+            {/* Recetas del círculo mágico */}
+            <div style={gCard}>
+                <div style={{ ...gTitle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>🔮 Recetas del Círculo ({recipes.length})</span>
+                    <span style={{ fontSize: 11, color: "#888", fontWeight: "normal" }}>
+                        Elementos + Sujeto + Vector + Forma
+                    </span>
+                </div>
+                {recipes.length === 0 ? (
+                    <div style={{ padding: "16px 0", textAlign: "center", color: "#666", fontSize: 13, fontStyle: "italic" }}>
+                        Aún no tienes recetas. Fórjalas en combate con el círculo mágico, o encuéntralas explorando.
+                    </div>
+                ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+                        {recipes.map((r) => (
+                            <div key={r.id} style={{ background: "#12122a", border: "1px solid #c9a84c33", borderLeft: "4px solid #c9a84c", borderRadius: 6, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 14 }}>{r.elements.map((e) => getSchool(e).icon).join("")}</span>
+                                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#fff" }}>{forgeName(r)}</span>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#888" }}>
+                                    <span title="Sujeto · Vector · Forma" style={{ color: "#c9a84c" }}>
+                                        {[r.subject, r.vector, r.form].map((id) => getRune(id)?.name ?? id).join(" · ")}
+                                    </span>
+                                    <span>{SOURCE_LABEL[r.source ?? "crafted"]}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Hechizos conocidos */}

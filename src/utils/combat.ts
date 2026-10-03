@@ -17,6 +17,8 @@ export function getEffectiveCost(
   affinity: ElementAffinity,
 ): number {
   if ("element" in spell) {
+    // Los hechizos forjados ya traen el coste final (afinidad incluida)
+    if (spell.forged) return spell.manaCost;
     return Math.round(spell.manaCost * (affinity[spell.element] ?? 1));
   }
   return spell.manaCost;
@@ -528,13 +530,34 @@ export function initCombat(enemies: Enemy[]): CombatState {
   };
 }
 
-function computeAbilityDamage(
+export function computeAbilityDamage(
   ability: Spell | Skill,
   elementLevels: ElementLevels,
   enemy: Enemy,
   magicalStrength: number,
   physicalStrength: number,
+  /** true = sin tirada de crítico (para vistas previas) */
+  deterministic = false,
 ): { dmg: number; tag: string } {
+  if ("element" in ability && ability.forged) {
+    // El daño ya incluye nivel, fuerza mágica, runas y estado mental.
+    const weights = ability.elementWeights ?? {};
+    const wWeak = enemy.weakness ? (weights[enemy.weakness] ?? 0) : 0;
+    const wImmune = enemy.immunity ? (weights[enemy.immunity] ?? 0) : 0;
+    const weak = 1 + 0.5 * wWeak;
+    const res = (enemy.magicResistance / 3) * (1 - (ability.pierce ?? 0));
+    let dmg = Math.max(1, Math.round((ability.damage ?? 0) * weak - res));
+    let tag = wWeak > 0 ? " [DEBILIDAD!]" : "";
+    if (wImmune > 0) {
+      dmg = Math.max(1, Math.round(dmg * (1 - 0.9 * wImmune)));
+      tag = wImmune >= 1 ? " [INMUNE]" : " [RESISTE]";
+    }
+    if (!deterministic && ability.critChance && Math.random() < ability.critChance) {
+      dmg = Math.round(dmg * (ability.critMult ?? 1.5));
+      tag += " [CRÍTICO!]";
+    }
+    return { dmg, tag };
+  }
   if ("element" in ability) {
     const weak = enemy.weakness === ability.element ? 1.5 : 1;
     const scaling = 1 + elementLevels[ability.element] * 0.15; // nv1 ×1.15, nv10 ×2.5

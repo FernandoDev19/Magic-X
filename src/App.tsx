@@ -31,6 +31,7 @@ import { initCombat } from "./utils/combat";
 import type { GameState } from "./types/game-state";
 import type { EquippedGear } from "./types/equipment.type";
 import { getSkillById } from "./data/skills";
+import { getKnownRecipes } from "./utils/spell-forge";
 import type { View } from "./types/view.type";
 
 const STORAGE_KEY = "magicx_v5";
@@ -58,6 +59,7 @@ function buildInitialState(): GameState {
       elementLevels: { ...p.elementLevels },
       elementAffinity: { ...p.elementAffinity },
       spells: p.startingSpellIds.map((id) => getSpellById(id)!).filter(Boolean),
+      recipes: [],
       items: buildInventory(p.startingItemIds),
       equipment: buildStartingEquipment(),
       statusEffects: [],
@@ -102,6 +104,7 @@ export default function App() {
         player: {
           ...parsed.player,
           party: parsed.player?.party ?? INITIAL_COMPANIONS,
+          recipes: parsed.player?.recipes ?? [],
           level: parsed.player?.level ?? levelFromXp(parsed.player?.xp ?? 0),
         },
         flags: parsed.flags ?? {},
@@ -521,6 +524,7 @@ export default function App() {
                   <GrimoireView
                     playerSpells={state.player.spells}
                     elementLevels={state.player.elementLevels}
+                    recipes={getKnownRecipes(state.player)}
                   />
                 </div>
               )}

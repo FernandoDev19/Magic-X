@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CombatState } from "../types/combat-state.type";
 import type { GameState } from "../types/game-state";
 import type { Enemy } from "../types/enemy.type";
@@ -27,6 +27,9 @@ import { resolveLoot, mergeLootIntoInventory } from "../utils/loot";
 import { getSanityEffects } from "../utils/mental-effects";
 import { gainXp } from "../utils/leveling";
 import { announceLevelUps } from "../utils/level-up-ui";
+import { SpellCircle } from "../components/SpellCircle";
+import { getKnownRecipes, type ForgeContext, type ForgedSpell } from "../utils/spell-forge";
+import type { SpellRecipe } from "../types/rune.type";
 
 interface Props {
   state: GameState;
@@ -206,8 +209,8 @@ function EnemyTile({ enemy, selected, shaking, popups, onSelect }: {
 
 interface MiniBar { label: string; value: number; max: number; color: string }
 
-function PartyRow({ name, portrait, hp, maxHp, bars, dead, active, hit, popups, effects }: {
-  name: string; portrait: string; hp: number; maxHp: number; bars: MiniBar[];
+function PartyRow({ name, hp, maxHp, bars, dead, active, hit, popups, effects }: {
+  name: string; portrait?: string; hp: number; maxHp: number; bars: MiniBar[];
   dead?: boolean; active?: boolean; hit?: boolean; popups: Popup[]; effects?: StatusEffect[];
 }) {
   const pct = (hp / maxHp) * 100;
@@ -247,7 +250,7 @@ function PartyRow({ name, portrait, hp, maxHp, bars, dead, active, hit, popups, 
 }
 
 // ─── Ventana de comandos ───────────────────────────────────────────────────
-type Tab = "skills" | "spells" | "items";
+type Tab = "skills" | "items";
 
 interface Info {
   title: string;
@@ -302,13 +305,14 @@ function MenuBtn({ icon, label, badge, active, disabled, danger, onClick, onHove
 
 // ═══════════════════════════════════════════════════════════════════════════
 export function CombatView({
-  combat, spells, items, mana, state, skills,
+  combat, items, mana, state, skills,
   setState, setCombatResult, setView, setGameOver,
 }: Props) {
   const [shakeEnemy, setShakeEnemy] = useState<number | null>(null);
   const [hitPlayer, setHitPlayer] = useState(false);
   const [popups, setPopups] = useState<Popup[]>([]);
-  const [tab, setTab] = useState<Tab>("spells");
+  const [tab, setTab] = useState<Tab>("skills");
+  const [showCircle, setShowCircle] = useState(false);
   const [info, setInfo] = useState<Info | null>(null);
   const [showLog, setShowLog] = useState(false);
   const startedRef = useRef(false);
@@ -321,6 +325,14 @@ export function CombatView({
   const bossFight = combat.enemies.some((e) => !!e.phases && e.hp > 0);
   const partyActive = (state.player.party ?? []).filter((c) => c.isRecruited && c.isActive).slice(0, 2);
   const actor = combat.order[combat.turnIdx];
+  const forgeCtx = useMemo<ForgeContext>(
+    () => ({
+      stats: getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects),
+      elementLevels: state.player.elementLevels,
+      elementAffinity: state.player.elementAffinity,
+    }),
+    [state.player.stats, state.player.equipment, state.player.statusEffects, state.player.elementLevels, state.player.elementAffinity],
+  );
 
   function flashEnemy(idx: number) {
     setShakeEnemy(idx);
@@ -467,6 +479,117 @@ export function CombatView({
     });
   }
 
+  /** Lanza un hechizo forjado en el círculo mágico (runas + elementos) */
+  function handleCastForged(forged: ForgedSpell) {
+    if (!isPlayerTurn) return;
+    setShowCircle(false);
+    if (Math.random() < sanityEff.missChance) {
+      return resolve(addLog(state, "Tu mente fragmentada interrumpe el hechizo."));
+    }
+    const eff = getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects);
+    const p = state.player;
+    const extra: string[] = [];
+
+    // Inestabilidad: el hechizo se rebela, pierde la mitad de su fuerza y te golpea de vuelta
+    let spell = forged.spell;
+    const unstable = forged.instability > 0 && Math.random() < forged.instability;
+    let backlash = 0;
+    let sanityLoss = 0;
+    if (unstable) {
+      spell = {
+        ...spell,
+        damage: spell.damage ? Math.max(1, Math.round(spell.damage * 0.5)) : undefined,
+        heal: spell.heal ? Math.max(1, Math.round(spell.heal * 0.5)) : undefined,
+        effects: undefined,
+        critChance: undefined,
+      };
+      backlash = Math.min(p.stats.hp - 1, Math.max(2, Math.round(spell.manaCost * 0.4)));
+      sanityLoss = 3;
+      extra.push("💥 ¡El hechizo se desestabiliza! Pierde fuerza y la magia te quema por dentro.");
+    }
+
+    if (!targetEnemy && spell.targetType === "enemy") return;
+    const target = targetEnemy ?? state.combat.enemies[0];
+
+    let newEnemies = state.combat.enemies;
+    let newMana = p.mana;
+    let newStats = p.stats;
+    let newEffects = p.statusEffects;
+    let messages: string[] = [];
+
+    if (spell.areaEffect) {
+      const r = castAbilityArea(
+        spell, p.mana, p.elementAffinity, p.elementLevels, state.combat.enemies,
+        p.stats, p.statusEffects, eff.magical_strength, eff.physical_strength,
+      );
+      if (!r.success) return setState(addLog(state, ...r.messages));
+      ({ newEnemies, newMana, messages } = r);
+      newStats = r.newPlayerStats;
+      newEffects = r.newPlayerEffects;
+    } else {
+      const r = castAbilitySingle(
+        spell, p.mana, p.elementAffinity, p.elementLevels, target,
+        p.stats, p.statusEffects, eff.magical_strength, eff.physical_strength,
+      );
+      if (!r.success) return setState(addLog(state, ...r.messages));
+      if (spell.targetType !== "self") flashEnemy(targetIdx);
+      newEnemies = state.combat.enemies.map((e, i) => (i === targetIdx ? r.newEnemy : e));
+      ({ newMana, messages } = r);
+      newStats = r.newPlayerStats;
+      newEffects = r.newPlayerEffects;
+    }
+
+    // Robo de maná / vida (vector Retro, elementos vitales)
+    const dealt = state.combat.enemies.reduce((s, e, i) => s + Math.max(0, e.hp - (newEnemies[i]?.hp ?? e.hp)), 0);
+    if (dealt > 0 && spell.siphon) {
+      const mGain = Math.round(dealt * (spell.siphon.mana ?? 0));
+      const hGain = Math.round(dealt * (spell.siphon.hp ?? 0));
+      if (mGain > 0) {
+        newMana = { ...newMana, mana: Math.min(newMana.maxMana, newMana.mana + mGain) };
+        extra.push(`↩ +${mGain} maná del daño causado.`);
+      }
+      if (hGain > 0) {
+        newStats = { ...newStats, hp: Math.min(newStats.maxHp, newStats.hp + hGain) };
+        extra.push(`❤ +${hGain} PV absorbidos.`);
+      }
+    }
+
+    // Estado mental: corrupción por el tipo de magia, retroceso por inestabilidad
+    if (spell.corruptionShift) {
+      const c = Math.max(0, Math.min(newStats.maxCorruption, newStats.corruption + spell.corruptionShift));
+      if (c !== newStats.corruption) {
+        extra.push(`${spell.corruptionShift > 0 ? "☠" : "✧"} Corrupción ${spell.corruptionShift > 0 ? "+" : ""}${spell.corruptionShift}.`);
+        newStats = { ...newStats, corruption: c };
+      }
+    }
+    if (backlash > 0) {
+      newStats = { ...newStats, hp: Math.max(1, newStats.hp - backlash), sanity: Math.max(0, newStats.sanity - sanityLoss) };
+      extra.push(`🩸 Retroceso: −${backlash} PV, −${sanityLoss} Cordura.`);
+    }
+
+    // Experiencia elemental al rematar
+    let levels = p.elementLevels;
+    if (allEnemiesDead(newEnemies)) {
+      (spell.elements ?? []).forEach((el, i) => {
+        levels = { ...levels, [el]: Math.min(100, levels[el] + (i === 0 ? 2 : 1)) };
+      });
+    }
+
+    resolve({
+      ...state,
+      player: { ...p, stats: newStats, mana: newMana, statusEffects: newEffects, elementLevels: levels },
+      combat: { ...state.combat, enemies: newEnemies, log: [...state.combat.log, ...extra.slice(0, unstable ? 1 : 0), ...messages, ...extra.slice(unstable ? 1 : 0)] },
+    });
+  }
+
+  function handleSaveRecipe(recipe: SpellRecipe) {
+    setState((s) => {
+      const known = s.player.recipes ?? [];
+      if (known.some((r) => r.id === recipe.id)) return s;
+      return addLog({ ...s, player: { ...s.player, recipes: [...known, recipe] } }, "📖 Nueva receta guardada en el grimorio.");
+    });
+  }
+
   function handleUseItem(item: Item) {
     if (!isPlayerTurn || !item.usable || !item.onUse || item.quantity < 1) return;
     const updates = item.onUse(state.player.stats, state.player.mana);
@@ -581,7 +704,7 @@ export function CombatView({
       info: { title: item.name, description: item.description ?? "Objeto consumible.", target: "Tú" },
     }));
 
-  const rows: Row[] = tab === "skills" ? abilityRows(skills) : tab === "spells" ? abilityRows(spells) : itemRows;
+  const rows: Row[] = tab === "skills" ? abilityRows(skills) : itemRows;
 
   const defaultInfo: Info | null = targetEnemy
     ? {
@@ -717,7 +840,11 @@ export function CombatView({
               cost: "+8 Maná", costColor: "#5DCAA5", target: "Tú",
             } : null)} />
           <MenuBtn icon="✦" label="Habilidades" badge={String(skills.length)} active={tab === "skills"} onClick={() => setTab("skills")} onHover={() => {}} />
-          <MenuBtn icon="🔮" label="Hechizos" badge={String(spells.length)} active={tab === "spells"} onClick={() => setTab("spells")} onHover={() => {}} />
+          <MenuBtn icon="🔮" label="Hechizos" badge="círculo" disabled={!isPlayerTurn} onClick={() => setShowCircle(true)}
+            onHover={(on) => setInfo(on ? {
+              title: "Círculo mágico",
+              description: "Combina elementos del octagrama con runas de Sujeto, Vector y Forma para forjar tu hechizo.",
+            } : null)} />
           <MenuBtn icon="🎒" label="Objetos" badge={String(itemRows.length)} active={tab === "items"} onClick={() => setTab("items")} onHover={() => {}} />
           <MenuBtn icon={canFlee ? "🏃" : "🔒"} label="Huir" danger disabled={!isPlayerTurn || !canFlee} onClick={handleFlee}
             onHover={(on) => setInfo(on ? {
@@ -730,7 +857,7 @@ export function CombatView({
         <div style={{ overflowY: "auto", paddingRight: 2 }}>
           {rows.length === 0 ? (
             <div style={{ fontSize: 11, color: "#555", fontStyle: "italic", padding: 8 }}>
-              {tab === "skills" ? "Aún no conoces habilidades. Sube de nivel para aprenderlas." : tab === "items" ? "Sin objetos usables." : "Sin hechizos."}
+              {tab === "skills" ? "Aún no conoces habilidades. Sube de nivel para aprenderlas." : "Sin objetos usables."}
             </div>
           ) : (
             rows.map((r) => (
@@ -777,6 +904,21 @@ export function CombatView({
           )}
         </div>
       </div>
+
+      {showCircle && (
+        <SpellCircle
+          ctx={forgeCtx}
+          mana={state.player.mana}
+          playerLevel={state.player.level}
+          flags={state.flags}
+          recipes={getKnownRecipes(state.player)}
+          target={targetEnemy}
+          isPlayerTurn={isPlayerTurn}
+          onCast={(forged) => handleCastForged(forged)}
+          onSaveRecipe={handleSaveRecipe}
+          onClose={() => setShowCircle(false)}
+        />
+      )}
     </div>
   );
 }
