@@ -3,7 +3,7 @@ import type { CombatState } from "../types/combat-state.type";
 import type { GameState } from "../types/game-state";
 import type { Enemy } from "../types/enemy.type";
 import type { Item } from "../types/item.type";
-import type { StatusEffect } from "../types/status-effect.type";
+import type { StatusEffect, StatusEffectType } from "../types/status-effect.type";
 import type { ElementLevels } from "../types/magic-element.type";
 import type { Mana, Stats } from "../types/player.type";
 import type { Spell } from "../types/spell.type";
@@ -484,7 +484,7 @@ export function CombatView({
     if (!isPlayerTurn) return;
     setShowCircle(false);
     if (Math.random() < sanityEff.missChance) {
-      return resolve(addLog(state, "Tu mente fragmentada interrumpe el hechizo."));
+      return resolve(addLog(state, "🔮 Tus ojos ven cosas que no existen. Tu mente fragmentada interrumpe el casteo."));
     }
     const eff = getEffectiveStats(state.player.stats, state.player.equipment, state.player.statusEffects);
     const p = state.player;
@@ -495,6 +495,9 @@ export function CombatView({
     const unstable = forged.instability > 0 && Math.random() < forged.instability;
     let backlash = 0;
     let sanityLoss = 0;
+
+    let injectedBacklashEffects = [...p.statusEffects]; 
+
     if (unstable) {
       spell = {
         ...spell,
@@ -503,9 +506,21 @@ export function CombatView({
         effects: undefined,
         critChance: undefined,
       };
-      backlash = Math.min(p.stats.hp - 1, Math.max(2, Math.round(spell.manaCost * 0.4)));
-      sanityLoss = 3;
+      backlash = Math.min(p.stats.hp - 1, Math.max(2, Math.round(spell.manaCost * 0.5)));
+      sanityLoss = 5;
       extra.push("💥 ¡El hechizo se desestabiliza! Pierde fuerza y la magia te quema por dentro.");
+      if (p.stats.corruption > 50) {
+        const efectosMalditos: StatusEffect[] = [
+          { type: "paralyzed", duration: 1, permanent: false },
+          { type: "frozen", duration: 1, permanent: false },
+          { type: "weakened", duration: 1, permanent: true },
+        ];
+        const efectoElegido = efectosMalditos[Math.floor(Math.random() * efectosMalditos.length)] as StatusEffect;
+        if (!injectedBacklashEffects.includes(efectoElegido)) {
+          injectedBacklashEffects.push(efectoElegido);
+          extra.push(`☣ La corrupción infecta tu flujo: Quedas [${efectoElegido}] por ${efectoElegido.duration} turno.`);
+        }
+      }
     }
 
     if (!targetEnemy && spell.targetType === "enemy") return;
@@ -514,8 +529,12 @@ export function CombatView({
     let newEnemies = state.combat.enemies;
     let newMana = p.mana;
     let newStats = p.stats;
-    let newEffects = p.statusEffects;
+    let newEffects = injectedBacklashEffects; 
     let messages: string[] = [];
+
+    if (forged.notes) {
+      extra.push(...forged.notes);
+    }
 
     if (spell.areaEffect) {
       const r = castAbilityArea(

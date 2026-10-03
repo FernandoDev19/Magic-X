@@ -40,10 +40,10 @@ export const ELEMENT_FORGE: Record<MagicElement, ElementForgeData> = {
         self: { type: "invisible", duration: 2 },
     },
     light: {
-        noun: "Luz", damage: 14, cost: 12, heal: 22, pierce: 0.2,
+        noun: "Luz", damage: 18, cost: 12, heal: 22, pierce: 0.2,
     },
     darkness: {
-        noun: "Sombra", damage: 13, cost: 11, heal: 0, pierce: 0.1,
+        noun: "Sombra", damage: 20, cost: 11, heal: 0, pierce: 0.1,
         offense: { type: "cursed", duration: 3, value: 4 },
         self: { type: "strengthened", duration: 3, value: 12 },
     },

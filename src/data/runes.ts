@@ -98,14 +98,14 @@ export const OCTAGRAM_IMAGE = "/art/ui/Pergamino Circulo magico.png";
 export const OCTAGRAM_ASPECT = 640 / 669;
 
 export const ELEMENT_NODES: ElementNode[] = [
-    { element: "light",    x: 50, y: 22 }, // arriba (A)
+    { element: "fire",    x: 50, y: 22 }, // arriba (A)
     { element: "electric", x: 69, y: 35 }, // arriba-derecha
-    { element: "fire",     x: 78, y: 51 }, // derecha
-    { element: "earth",    x: 69, y: 65 }, // abajo-derecha
-    { element: "darkness", x: 50, y: 80 }, // abajo
-    { element: "vital",    x: 30, y: 65 }, // abajo-izquierda
-    { element: "water",    x: 20, y: 50 }, // izquierda
-    { element: "air",      x: 30, y: 34 }, // arriba-izquierda
+    { element: "darkness",     x: 78, y: 51 }, // derecha
+    { element: "air",    x: 69, y: 65 }, // abajo-derecha
+    { element: "water", x: 50, y: 80 }, // abajo
+    { element: "earth",    x: 30, y: 65 }, // abajo-izquierda
+    { element: "light",    x: 20, y: 50 }, // izquierda
+    { element: "vital",      x: 30, y: 34 }, // arriba-izquierda
 ];
 
 /** Pares de elementos opuestos: combinarlos es potente pero inestable */
